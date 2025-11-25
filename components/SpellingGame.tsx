@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { WordPair } from '../types';
 
 interface SpellingGameProps {
@@ -35,11 +35,12 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
   // Input Focus Tracking
   const [activeIndex, setActiveIndex] = useState<number>(-1);
 
+  // Keyboard State
+  const [isUpperCase, setIsUpperCase] = useState(false);
+
   // Stats
   const [initialCount, setInitialCount] = useState(0);
   const [completedCount, setCompletedCount] = useState(0);
-
-  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   // Initialize Queue
   useEffect(() => {
@@ -91,20 +92,9 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
     const firstHidden = newLetters.findIndex(l => l.isHidden);
     setActiveIndex(firstHidden);
 
-    // Auto-focus physical input for desktop users
-    // We check window.innerWidth to avoid auto-popping keyboard on mobile if possible,
-    // though reliable detection is tricky. We'll default to focusing but user can use virtual keys.
-    if (window.innerWidth > 768) {
-        setTimeout(() => {
-            inputRefs.current[firstHidden]?.focus();
-        }, 100);
-    }
-
   }, [currentWord, completedCount, initialCount, queue.length]);
 
-  const handleInputChange = (index: number, val: string) => {
-    const char = val.slice(-1);
-    
+  const updateLetterState = (index: number, char: string) => {
     if (feedback === 'wrong') {
         setFeedback('idle');
     }
@@ -125,28 +115,7 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
       // Update active index regardless of focus
       if (nextInputIndex !== -1) {
         setActiveIndex(nextInputIndex);
-        // Only focus physically if NOT using virtual keyboard (hard to detect, so we keep focus behavior)
-        inputRefs.current[nextInputIndex]?.focus();
       }
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
-    if (e.key === 'Backspace' && !letters[index].userInput) {
-      // Move back
-      let prevInputIndex = -1;
-      for (let i = index - 1; i >= 0; i--) {
-        if (letters[i].isHidden) {
-          prevInputIndex = i;
-          break;
-        }
-      }
-      if (prevInputIndex !== -1) {
-        setActiveIndex(prevInputIndex);
-        inputRefs.current[prevInputIndex]?.focus();
-      }
-    } else if (e.key === 'Enter') {
-      checkAnswer();
     }
   };
 
@@ -180,7 +149,7 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
           }
       } else {
           // Character Input
-          handleInputChange(activeIndex, key);
+          updateLetterState(activeIndex, key);
       }
   };
 
@@ -211,7 +180,6 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
       // On error, reset focus/active to first hidden letter to allow retry
       const firstHidden = letters.findIndex(l => l.isHidden);
       setActiveIndex(firstHidden);
-      inputRefs.current[firstHidden]?.focus();
     }
   };
 
@@ -270,7 +238,7 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
           {currentWord.cn}
         </h2>
 
-        {/* Word Inputs */}
+        {/* Word Input Boxes (Divs) */}
         <div className="flex flex-wrap justify-center gap-2 mb-8">
           {letters.map((letter, idx) => {
             if (!letter.isHidden) {
@@ -284,23 +252,18 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
             const isActive = idx === activeIndex;
 
             return (
-              <input
+              <div
                 key={idx}
-                ref={(el) => { inputRefs.current[idx] = el; }}
-                type="text"
-                value={letter.userInput}
-                onChange={(e) => handleInputChange(idx, e.target.value)}
-                onKeyDown={(e) => handleKeyDown(e, idx)}
-                onFocus={() => setActiveIndex(idx)}
-                readOnly={false} /* Can keep as false to allow keyboard, but virtual buttons will also work */
-                disabled={feedback === 'correct'}
-                className={`w-8 h-12 sm:w-10 sm:h-14 text-center text-xl sm:text-2xl font-mono font-bold border-2 rounded-lg focus:outline-none transition-all caret-indigo-500
+                onClick={() => setActiveIndex(idx)}
+                className={`w-8 h-12 sm:w-10 sm:h-14 flex items-center justify-center text-xl sm:text-2xl font-mono font-bold border-2 rounded-lg transition-all cursor-pointer select-none
                   ${feedback === 'idle' ? 'text-slate-800' : ''}
-                  ${isActive && feedback === 'idle' ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-slate-200'}
+                  ${isActive && feedback === 'idle' ? 'border-indigo-500 ring-2 ring-indigo-200 bg-indigo-50/30' : 'border-slate-200 bg-white'}
                   ${feedback === 'correct' ? 'border-green-500 bg-green-50 text-green-700' : ''}
                   ${feedback === 'wrong' ? 'border-red-500 bg-red-50 text-red-700' : ''}
                 `}
-              />
+              >
+                {letter.userInput}
+              </div>
             );
           })}
         </div>
@@ -332,19 +295,36 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
             <div className="flex flex-col gap-2">
                 {KEYBOARD_ROWS.map((row, rowIdx) => (
                     <div key={rowIdx} className="flex justify-center gap-1 sm:gap-2">
-                        {row.map((char) => (
-                            <button
-                                key={char}
-                                onClick={() => handleVirtualKey(char)}
-                                className="w-8 h-10 sm:w-10 sm:h-12 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold rounded-md shadow-sm uppercase text-sm sm:text-base transition-colors"
-                            >
-                                {char}
-                            </button>
-                        ))}
+                        {row.map((char) => {
+                            const displayChar = isUpperCase ? char.toUpperCase() : char;
+                            return (
+                                <button
+                                    key={char}
+                                    onClick={() => handleVirtualKey(displayChar)}
+                                    className="w-8 h-10 sm:w-10 sm:h-12 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold rounded-md shadow-sm text-sm sm:text-base transition-colors"
+                                >
+                                    {displayChar}
+                                </button>
+                            );
+                        })}
                     </div>
                 ))}
-                {/* Backspace Row */}
-                <div className="flex justify-center mt-1">
+                {/* Backspace & Caps Row */}
+                <div className="flex justify-center gap-2 mt-1">
+                    <button
+                        onClick={() => setIsUpperCase(!isUpperCase)}
+                        className={`px-4 h-10 sm:h-12 font-bold rounded-md shadow-sm flex items-center gap-2 transition-colors ${
+                            isUpperCase 
+                            ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
+                            : 'bg-slate-200 text-slate-600 hover:bg-slate-300 active:bg-slate-400'
+                        }`}
+                        aria-label="Toggle Uppercase"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                             <path fillRule="evenodd" d="M3.293 9.707a1 1 0 010-1.414l6-6a1 1 0 011.414 0l6 6a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+
                     <button
                         onClick={() => handleVirtualKey('BACKSPACE')}
                         className="px-6 h-10 sm:h-12 bg-slate-200 hover:bg-slate-300 active:bg-slate-400 text-slate-600 font-bold rounded-md shadow-sm flex items-center gap-2 transition-colors"
