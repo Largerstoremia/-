@@ -59,39 +59,21 @@ const GameControls: React.FC<GameControlsProps> = ({
   return (
     <div className="w-full max-w-4xl mx-auto mb-6 flex flex-col lg:flex-row items-center justify-between gap-4 p-4 bg-white/80 backdrop-blur-sm rounded-2xl shadow-sm border border-slate-200">
       
-      {/* Brand */}
-      <div className="flex items-center gap-2">
-        <div className="w-12 h-10 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-200 text-lg">
-          铭
-        </div>
-        <div className="hidden sm:block">
-          <h1 className="text-lg font-bold text-slate-800 tracking-tight">Match&Spell</h1>
-          <p className="text-xs text-slate-500">Match & Spell</p>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="flex items-center gap-6 text-sm font-medium text-slate-600 order-3 lg:order-2">
-        {gameMode === 'match' && (
-          <>
-            <div className="flex flex-col items-center">
-              <span className="text-xs text-slate-400 uppercase tracking-wider">Time</span>
-              <span className="text-lg font-mono text-slate-800">{formatTime(timer)}</span>
+      {/* Top Row: Brand & Game Mode Toggle */}
+      <div className="flex w-full lg:w-auto justify-between lg:justify-start items-center gap-4">
+        {/* Brand */}
+        <div className="flex items-center gap-2">
+            <div className="w-12 h-10 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-200 text-lg">
+            铭
             </div>
-            <div className="h-8 w-px bg-slate-200"></div>
-          </>
-        )}
-        <div className="flex flex-col items-center">
-          <span className="text-xs text-slate-400 uppercase tracking-wider">{gameMode === 'match' ? 'Moves' : 'Score'}</span>
-          <span className="text-lg font-mono text-slate-800">{moves}</span>
+            <div className="hidden sm:block">
+            <h1 className="text-lg font-bold text-slate-800 tracking-tight">Match&Spell</h1>
+            <p className="text-xs text-slate-500">Match & Spell</p>
+            </div>
         </div>
-      </div>
 
-      {/* Controls */}
-      <div className="flex flex-wrap justify-center items-center gap-2 order-2 lg:order-3 w-full lg:w-auto">
-        
         {/* Game Mode Toggle */}
-        <div className="flex bg-slate-100 p-1 rounded-lg mr-2 border border-slate-200">
+        <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
             <button
                 onClick={() => setGameMode('match')}
                 disabled={gameState === GameState.Playing}
@@ -115,25 +97,39 @@ const GameControls: React.FC<GameControlsProps> = ({
                 Spell
             </button>
         </div>
+      </div>
 
+      {/* Stats (Hidden on mobile? Or moved to bottom? Keeping visible for now but might wrap) */}
+      <div className="flex items-center gap-6 text-sm font-medium text-slate-600 order-3 lg:order-2 w-full lg:w-auto justify-center lg:justify-start py-2 lg:py-0 border-t lg:border-none border-slate-100 lg:bg-transparent">
+        {gameMode === 'match' && (
+          <>
+            <div className="flex flex-col items-center">
+              <span className="text-xs text-slate-400 uppercase tracking-wider">Time</span>
+              <span className="text-lg font-mono text-slate-800">{formatTime(timer)}</span>
+            </div>
+            <div className="h-8 w-px bg-slate-200"></div>
+          </>
+        )}
+        <div className="flex flex-col items-center">
+          <span className="text-xs text-slate-400 uppercase tracking-wider">{gameMode === 'match' ? 'Moves' : 'Score'}</span>
+          <span className="text-lg font-mono text-slate-800">{moves}</span>
+        </div>
+      </div>
+
+      {/* Bottom Row: Controls */}
+      <div className="flex flex-nowrap justify-center items-center gap-2 order-2 lg:order-3 w-full lg:w-auto">
+        
         {/* Delete Mode Toggle / Confirm Button */}
         <button
           onClick={handleDeleteButtonClick}
           disabled={gameState === GameState.Playing}
-          className={`px-3 py-2 border rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 disabled:opacity-50 ${
+          className={`flex-shrink-0 px-3 py-2 border rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 disabled:opacity-50 ${
             isDeleteMode 
               ? deckToDeleteId
                 ? 'bg-green-600 border-green-600 text-white hover:bg-green-700 focus:ring-green-500' // Confirm State
                 : 'bg-red-50 border-red-500 text-red-600 focus:ring-red-500' // Active Mode State
               : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50' // Default State
           }`}
-          title={
-            isDeleteMode && deckToDeleteId 
-              ? "Confirm Deletion" 
-              : isDeleteMode 
-                ? "Cancel Delete Mode" 
-                : "Delete a Custom Deck"
-          }
         >
           {isDeleteMode && deckToDeleteId ? (
              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -146,18 +142,18 @@ const GameControls: React.FC<GameControlsProps> = ({
           )}
         </button>
 
-        {/* Deck Selector */}
+        {/* Deck Selector - Adjusted width for mobile */}
         <select
           value={isDeleteMode ? (deckToDeleteId || "") : currentDeckId}
           onChange={(e) => setDeckId(e.target.value)}
           disabled={gameState === GameState.Playing}
-          className={`flex-1 lg:w-48 px-3 py-2 border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 disabled:opacity-50 transition-colors ${
+          className={`w-28 sm:w-40 lg:w-48 px-2 py-2 border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 disabled:opacity-50 transition-colors text-ellipsis overflow-hidden ${
              isDeleteMode 
                ? 'bg-red-50 border-red-300 text-red-600 focus:ring-red-500' 
                : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-indigo-500'
           }`}
         >
-          {isDeleteMode && <option value="" disabled>Select a deck to delete...</option>}
+          {isDeleteMode && <option value="" disabled>Select...</option>}
           <optgroup label="Textbook Units">
             <option value={GameLevel.Unit1}>Unit 1</option>
             <option value={GameLevel.Unit1Supplement}>Unit 1 补充</option>
@@ -177,12 +173,11 @@ const GameControls: React.FC<GameControlsProps> = ({
           )}
         </select>
 
-        {/* Edit Button (Only for custom decks when not playing and NOT in delete mode) */}
+        {/* Edit Button */}
         {isCustomDeck && gameState !== GameState.Playing && !isDeleteMode && (
           <button
             onClick={onEditDeck}
-            className="px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            title="Edit Deck"
+            className="flex-shrink-0 px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
               <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
@@ -194,8 +189,7 @@ const GameControls: React.FC<GameControlsProps> = ({
         <button
           onClick={onOpenBuilder}
           disabled={gameState === GameState.Playing || isDeleteMode}
-          className="px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-          title="Create Custom Deck"
+          className="flex-shrink-0 px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -206,7 +200,7 @@ const GameControls: React.FC<GameControlsProps> = ({
         {gameState === GameState.Playing ? (
           <button
             onClick={onExit}
-            className="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white text-sm font-medium rounded-lg transition-colors shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-rose-500"
+            className="flex-shrink-0 px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white text-sm font-medium rounded-lg transition-colors shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-rose-500"
           >
             Exit
           </button>
@@ -214,7 +208,7 @@ const GameControls: React.FC<GameControlsProps> = ({
           <button
             onClick={onRestart}
             disabled={isDeleteMode}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:bg-indigo-400"
+            className="flex-shrink-0 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:bg-indigo-400"
           >
             Start
           </button>
