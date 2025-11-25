@@ -128,6 +128,7 @@ const GameControls: React.FC<GameControlsProps> = ({
             <option value={GameLevel.Unit1}>Unit 1</option>
             <option value={GameLevel.Unit1Supplement}>Unit 1 补充</option>
             <option value={GameLevel.Unit2}>Unit 2</option>
+            <option value={GameLevel.Unit2Supplement}>Unit 2 补充</option>
             <option value={GameLevel.Unit3}>Unit 3</option>
             <option value={GameLevel.Unit4}>Unit 4</option>
             <option value={GameLevel.Unit5}>Unit 5</option>
@@ -190,4 +191,3 @@ const GameControls: React.FC<GameControlsProps> = ({
 };
 
 export default GameControls;
-    
