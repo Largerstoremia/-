@@ -165,7 +165,7 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
       setTimeout(() => {
         setCompletedCount(prev => prev + 1);
         setQueue(prev => prev.slice(1)); 
-      }, 1000);
+      }, 400); // Reduced delay for faster gameplay
     } else {
       setFeedback('wrong');
       if (!hasErrorOnCurrent) {
@@ -271,7 +271,7 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
         {/* Feedback Text */}
         <div className="h-6 mb-4">
             {feedback === 'wrong' && <p className="text-red-500 font-bold">Incorrect. Try again!</p>}
-            {feedback === 'correct' && <p className="text-green-500 font-bold animate-pulse">Correct!</p>}
+            {feedback === 'correct' && <p className="text-green-500 font-bold animate-[pulse_0.5s_ease-in-out_infinite]">Correct!</p>}
         </div>
 
         {/* Check Button */}
