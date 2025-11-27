@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { WordPair } from '../types';
 
 interface SpellingGameProps {
@@ -54,7 +54,39 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
 
   const currentWord = queue.length > 0 ? queue[0] : null;
 
-  // Initialize Letters for current word
+  // Audio Helper
+  const speakWord = useCallback((text: string) => {
+    window.speechSynthesis.cancel();
+    
+    // Pre-processing:
+    // 1. Replace Chinese pause mark '、' or slashes '/' with ', ' to force a distinct pause.
+    // 2. This ensures "am、is、are" is read as "am, is, are" separately.
+    const processedText = text.replace(/[、\/]/g, ', ');
+
+    const utterance = new SpeechSynthesisUtterance(processedText);
+    utterance.lang = 'en-US';
+    // Slower rate (0.5) for primary school students
+    utterance.rate = 0.5; 
+
+    // Attempt to select a female English voice
+    const voices = window.speechSynthesis.getVoices();
+    const femaleVoice = voices.find(voice => 
+        voice.lang.startsWith('en') && (
+            voice.name.includes('Google US English') || 
+            voice.name.includes('Samantha') || 
+            voice.name.includes('Microsoft Zira') ||
+            voice.name.toLowerCase().includes('female')
+        )
+    );
+
+    if (femaleVoice) {
+        utterance.voice = femaleVoice;
+    }
+    
+    window.speechSynthesis.speak(utterance);
+  }, []);
+
+  // Initialize Letters for current word & Auto-play Audio
   useEffect(() => {
     if (!currentWord) {
         if (initialCount > 0 && completedCount >= initialCount && queue.length === 0) {
@@ -92,7 +124,10 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
     const firstHidden = newLetters.findIndex(l => l.isHidden);
     setActiveIndex(firstHidden);
 
-  }, [currentWord, completedCount, initialCount, queue.length]);
+    // Auto-play audio when new word loads
+    speakWord(currentWord.en);
+
+  }, [currentWord, completedCount, initialCount, queue.length, speakWord]);
 
   const updateLetterState = (index: number, char: string) => {
     if (feedback === 'wrong') {
@@ -183,6 +218,11 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
     }
   };
 
+  const playAudio = () => {
+    if (!currentWord) return;
+    speakWord(currentWord.en);
+  };
+
   if (isFinished) {
     return (
         <div className="w-full max-w-2xl mx-auto flex flex-col items-center justify-center min-h-[400px] animate-[fadeIn_0.5s_ease-out]">
@@ -233,10 +273,22 @@ const SpellingGame: React.FC<SpellingGameProps> = ({ words, onComplete, onUpdate
            ></div>
         </div>
 
-        {/* Chinese Definition */}
-        <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-slate-800 mb-8">
-          {currentWord.cn}
-        </h2>
+        {/* Chinese Definition & Audio */}
+        <div className="flex flex-col items-center mb-8 gap-3">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-slate-800">
+            {currentWord.cn}
+            </h2>
+            <button 
+                onClick={playAudio}
+                className="flex items-center gap-2 px-4 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-full text-sm font-medium transition-colors"
+                title="Listen to pronunciation"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.972 7.972 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
+                </svg>
+                Listen
+            </button>
+        </div>
 
         {/* Word Input Boxes (Divs) */}
         <div className="flex flex-wrap justify-center gap-2 mb-8">

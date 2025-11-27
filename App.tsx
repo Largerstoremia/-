@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { CardItem, GameLevel, GameState, WordPair, CustomDeck, GameMode } from './types';
-import { fetchWordPairs } from './services/geminiService';
+import { fetchWordPairs, fetchSentences } from './services/geminiService';
 import Card from './components/Card';
 import GameControls from './components/GameControls';
 import ResultModal from './components/ResultModal';
 import DeckBuilderModal from './components/DeckBuilderModal';
 import SpellingGame from './components/SpellingGame';
+import ReadingGame from './components/ReadingGame';
 
 // Helper to shuffle array
 function shuffleArray<T>(array: T[]): T[] {
@@ -189,35 +190,46 @@ const App: React.FC = () => {
 
     // Determine source of words
     const customDeck = customDecks.find(d => d.id === deckIdToUse);
-    if (customDeck) {
-      pairs = [...customDeck.pairs]; // Copy
-    } else {
-      // It's a built-in level (Unit 1-6)
-      pairs = await fetchWordPairs(deckIdToUse as GameLevel);
-    }
     
-    // Shuffle all pairs first
-    const shuffledPairs = shuffleArray(pairs);
-    setAllRoundPairs(shuffledPairs);
+    if (gameMode === 'read') {
+         // Reading Mode: use sentences
+         // Note: Custom decks currently only store words, but if we extended them we'd load here
+         // For now, only built-in levels support sentences properly
+         pairs = await fetchSentences(deckIdToUse as GameLevel);
+         
+         // Shuffle sentences for random order
+         setAllRoundPairs(shuffleArray(pairs));
+         setGameState(GameState.Playing);
 
-    if (gameMode === 'match') {
-        // MATCH MODE
-        // Slice first batch
-        const firstBatch = shuffledPairs.slice(0, BATCH_SIZE_PAIRS);
-        const remaining = shuffledPairs.slice(BATCH_SIZE_PAIRS);
-
-        setPendingPairs(remaining);
-        
-        // Start game
-        startBatch(firstBatch);
-        setGameState(GameState.Playing);
-        startTimer();
     } else {
-        // SPELLING MODE
-        // Use all words sequentially
-        // The SpellingGame component will handle the queue
-        setGameState(GameState.Playing);
-        // Timer not really needed unless we want to track total time
+        // Match or Spell Mode: use words
+        if (customDeck) {
+            pairs = [...customDeck.pairs]; // Copy
+        } else {
+            pairs = await fetchWordPairs(deckIdToUse as GameLevel);
+        }
+
+        // Shuffle all pairs first
+        const shuffledPairs = shuffleArray(pairs);
+        setAllRoundPairs(shuffledPairs);
+
+        if (gameMode === 'match') {
+            // MATCH MODE
+            // Slice first batch
+            const firstBatch = shuffledPairs.slice(0, BATCH_SIZE_PAIRS);
+            const remaining = shuffledPairs.slice(BATCH_SIZE_PAIRS);
+
+            setPendingPairs(remaining);
+            
+            // Start game
+            startBatch(firstBatch);
+            setGameState(GameState.Playing);
+            startTimer();
+        } else {
+            // SPELLING MODE
+            // Use all words sequentially
+            setGameState(GameState.Playing);
+        }
     }
 
   }, [currentDeckId, customDecks, startTimer, stopTimer, startBatch, gameMode]);
@@ -347,8 +359,45 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSpellingComplete = () => {
+  const handleSubGameComplete = () => {
     setGameState(GameState.Won);
+  };
+
+  const renderGameContent = () => {
+    switch (gameMode) {
+        case 'match':
+            return cards.length > 0 ? (
+                <div className="grid grid-cols-4 gap-3 sm:gap-4 auto-rows-fr perspective-1000">
+                    {cards.map(card => (
+                    <Card 
+                        key={card.id} 
+                        card={card} 
+                        onClick={handleCardClick} 
+                        disabled={isProcessing}
+                        isSelected={firstCardId === card.id || secondCardId === card.id}
+                    />
+                    ))}
+                </div>
+            ) : null;
+        case 'spell':
+            return (
+                <SpellingGame 
+                    words={allRoundPairs} 
+                    onComplete={handleSubGameComplete} 
+                    onUpdateScore={(newScore) => setMoves(newScore)}
+                />
+            );
+        case 'read':
+            return (
+                <ReadingGame 
+                    sentences={allRoundPairs}
+                    onComplete={handleSubGameComplete}
+                    onUpdateScore={(newScore) => setMoves(newScore)}
+                />
+            );
+        default:
+            return null;
+    }
   };
 
   return (
@@ -380,28 +429,7 @@ const App: React.FC = () => {
              <p className="text-slate-500 font-medium animate-pulse">Preparing your game...</p>
           </div>
         ) : gameState === GameState.Playing ? (
-            // Render Game Content based on Mode
-            gameMode === 'match' ? (
-                cards.length > 0 ? (
-                    <div className="grid grid-cols-4 gap-3 sm:gap-4 auto-rows-fr perspective-1000">
-                        {cards.map(card => (
-                        <Card 
-                            key={card.id} 
-                            card={card} 
-                            onClick={handleCardClick} 
-                            disabled={isProcessing}
-                            isSelected={firstCardId === card.id || secondCardId === card.id}
-                        />
-                        ))}
-                    </div>
-                ) : null
-            ) : (
-                <SpellingGame 
-                    words={allRoundPairs} 
-                    onComplete={handleSpellingComplete} 
-                    onUpdateScore={(newScore) => setMoves(newScore)}
-                />
-            )
+            renderGameContent()
         ) : gameState === GameState.Idle ? (
             <div className="flex flex-col items-center justify-center h-80 text-center text-slate-400">
                 <p className="text-lg">Ready to play?</p>

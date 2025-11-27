@@ -40,7 +40,7 @@ const UNIT_WORDS: Record<GameLevel, WordPair[]> = {
     { en: "new", cn: "新的" },
     { en: "let", cn: "让" },
     { en: "what", cn: "什么" },
-    { en: "am/is/are", cn: "是" },
+    { en: "am、is、are", cn: "是" },
   ],
   [GameLevel.Unit2]: [
     { en: "mum", cn: "(口语)妈妈" },
@@ -70,16 +70,12 @@ const UNIT_WORDS: Record<GameLevel, WordPair[]> = {
     { en: "family tree", cn: "族谱" },
     { en: "talk", cn: "交流, 交谈" },
     { en: "love", cn: "爱" },
-    { en: "how", cn: "怎么" },
     { en: "two", cn: "二" },
     { en: "fine", cn: "很好" },
     { en: "a/an", cn: "一个" },
-    { en: "he", cn: "他 (主格)" },
-    { en: "she", cn: "她 (主格)" },
-    { en: "they", cn: "他们 (主格)" },
-    { en: "them", cn: "他们 (宾格)" },
-    { en: "him", cn: "他 (宾格)" },
-    { en: "her", cn: "她 (宾格)" },
+    { en: "he", cn: "他" },
+    { en: "she", cn: "她" },
+    { en: "they", cn: "他们" }
   ],
   [GameLevel.Unit3]: [
     { en: "like", cn: "喜欢" },
@@ -165,6 +161,61 @@ const UNIT_WORDS: Record<GameLevel, WordPair[]> = {
   [GameLevel.Custom]: [],
 };
 
+// Sentence/Dialogue data
+const UNIT_SENTENCES: Record<GameLevel, WordPair[]> = {
+  [GameLevel.Unit1]: [
+    { en: "Hello, I'm Mike.", cn: "你好，我是麦克。" },
+    { en: "Hello, my name is Mike.", cn: "你好，我的名字是麦克。" },
+    { en: "Nice to meet you.", cn: "见到你很开心。" },
+    { en: "Nice to meet you, too.", cn: "见到你也很开心。" },
+    { en: "Wave your hand.", cn: "挥挥你的手。" },
+    { en: "Wave your arm.", cn: "挥挥你的手臂。" },
+    { en: "Look into my eyes.", cn: "看着我的眼睛" },
+    { en: "Point to your mouth. Smile!", cn: "指着你的嘴巴，笑！" },
+    { en: "Point to your ears. Listen!", cn: "指着你的耳朵，听！" },
+    { en: "Point to your eyes. Look!", cn: "指着你的眼睛，看！" },
+    { en: "We can share.", cn: "我们可以分享。" },
+    { en: "Thank you, Mike.", cn: "谢谢你，麦克。" },
+    { en: "Thanks, Mike.", cn: "谢谢，麦克。" },
+    { en: "I am nice to my friends.", cn: "我对我的朋友们很友好。" },
+    { en: "Mike is my new friend.", cn: "麦克是我的新朋友。" },
+    { en: "We play together.", cn: "我们一起玩。" },
+    { en: "We are good friends now.", cn: "我们现在是好朋友。" },
+    { en: "Let's be friends.", cn: "让我们做朋友吧。" },
+    { en: "What's your name?", cn: "你的名字是什么？" }
+  ],
+  [GameLevel.Unit2]: [
+    { en: "This is my family.", cn: "这是我的家庭。" },
+    { en: "That is my grandpa.", cn: "那是我的爷爷。" },
+    { en: "This is my friend.", cn: "这是我的朋友。" },
+    { en: "That is my father.", cn: "那是我的父亲。" },
+    { en: "Is this your sister?", cn: "这是你的姐姐吗？" },
+    { en: "Is that your aunt?", cn: "那是你的姑姑吗？" },
+    { en: "Yes, it is.", cn: "是的。" },
+    { en: "No, it's my cousin.", cn: "不，这是我的表姐。" },
+    { en: "Is that your brother?", cn: "那是你的兄弟吗？" },
+    { en: "No, it is my cousin.", cn: "不，那是我的堂(表)兄弟/姐妹。" },
+    { en: "I have a sister.", cn: "我有一个妹妹。" },
+    { en: "I have two brothers.", cn: "我有两个弟弟。" },
+    { en: "This family is big.", cn: "这个家庭很大。" },
+    { en: "This family is small.", cn: "这个家庭很小。" },
+    { en: "I love my family.", cn: "我爱我的家庭。" },
+    { en: "How are you?", cn: "你好吗？" },
+    { en: "I'm fine, thank you.", cn: "我很好，谢谢你。" },
+    { en: "I play with my brothers.", cn: "我和我的兄弟们一起玩耍。" },
+    { en: "I share with my sisters.", cn: "我和我的姐妹们一起分享。" },
+    { en: "I talk with my cousins.", cn: "我和我的堂兄弟们交谈。" }
+  ],
+  // Empty defaults for other levels
+  [GameLevel.Unit1Supplement]: [],
+  [GameLevel.Unit2Supplement]: [],
+  [GameLevel.Unit3]: [],
+  [GameLevel.Unit4]: [],
+  [GameLevel.Unit5]: [],
+  [GameLevel.Unit6]: [],
+  [GameLevel.Custom]: [],
+};
+
 export const fetchWordPairs = async (level: GameLevel): Promise<WordPair[]> => {
   // If it's a preset unit, return data immediately (no AI needed)
   if (level !== GameLevel.Custom && UNIT_WORDS[level] && UNIT_WORDS[level].length > 0) {
@@ -172,5 +223,12 @@ export const fetchWordPairs = async (level: GameLevel): Promise<WordPair[]> => {
   }
 
   // Fallback for custom or empty levels (though custom decks are handled in App.tsx)
+  return [];
+};
+
+export const fetchSentences = async (level: GameLevel): Promise<WordPair[]> => {
+  if (level !== GameLevel.Custom && UNIT_SENTENCES[level] && UNIT_SENTENCES[level].length > 0) {
+    return UNIT_SENTENCES[level];
+  }
   return [];
 };

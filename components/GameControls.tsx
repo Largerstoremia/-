@@ -96,6 +96,17 @@ const GameControls: React.FC<GameControlsProps> = ({
             >
                 Spell
             </button>
+            <button
+                onClick={() => setGameMode('read')}
+                disabled={gameState === GameState.Playing}
+                className={`px-3 py-1 rounded-md text-sm font-medium transition-all ${
+                    gameMode === 'read' 
+                    ? 'bg-white text-indigo-600 shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+            >
+                Read
+            </button>
         </div>
       </div>
 
