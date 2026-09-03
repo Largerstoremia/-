@@ -258,7 +258,7 @@ export const QuestionModal: React.FC<QuestionModalProps> = ({
               >
                 {Object.entries(DOMAIN_LABELS).map(([k, v]) => (
                   <option key={k} value={k}>
-                    {v} ({k})
+                    {v.label} ({k})
                   </option>
                 ))}
               </select>
