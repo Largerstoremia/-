@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SafetyQuestionGroup, RiskTier, TierAnswerRecord } from './types';
 import { INITIAL_SAFETY_GROUPS } from './mockData';
+import { fetchRemote, putRemote } from './api';
 import { TierComparator } from './components/TierComparator';
 import { DataTable } from './components/DataTable';
 import { DatasetAnalytics } from './components/DatasetAnalytics';
@@ -28,7 +29,7 @@ import {
 const STORAGE_KEY = 'CS_STUDIO_DATA_GROUPS_V1';
 
 export default function App() {
-  // Load data from localStorage or fallback to benchmark data
+  // Save & sync state
   const [groups, setGroups] = useState<SafetyQuestionGroup[]>(() => {
     try {
       const cached = localStorage.getItem(STORAGE_KEY);
@@ -84,6 +85,17 @@ export default function App() {
 
   const [isConfirmResetOpen, setIsConfirmResetOpen] = useState(false);
 
+  // 当前 groups 的 ref(供防抖写与首次迁移读取最新值)
+  const groupsRef = useRef(groups);
+  useEffect(() => {
+    groupsRef.current = groups;
+  }, [groups]);
+
+  // 云端同步:远端文件 sha / 初始化是否完成 / 是否需跳过下一次远端写(远端拉取覆盖本地时)
+  const shaRef = useRef<string | null>(null);
+  const initLoadedRef = useRef(false);
+  const skipNextRemoteWriteRef = useRef(false);
+
   const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
     setToastMessage({ text, type });
     setTimeout(() => {
@@ -91,7 +103,33 @@ export default function App() {
     }, 3500);
   };
 
-  // Sync to localStorage whenever groups change
+  // 挂载后从云端拉取最新数据集:远端有数据则以云端为准覆盖本地;
+  // 远端无文件时,若本地存在真实数据(非初始示例)则自动迁移上传,避免示例污染云端。
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const remote = await fetchRemote();
+      if (cancelled) return;
+      if (remote && remote.groups !== null) {
+        skipNextRemoteWriteRef.current = true;
+        shaRef.current = remote.sha;
+        setGroups(remote.groups);
+      } else {
+        const isPristine = JSON.stringify(INITIAL_SAFETY_GROUPS) === JSON.stringify(groupsRef.current);
+        if (!isPristine) {
+          const res = await putRemote(groupsRef.current, null);
+          if (res.ok) shaRef.current = res.sha ?? null;
+        }
+      }
+      initLoadedRef.current = true;
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 本地快照:每次 groups 变化立即写 localStorage(无防抖)
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(groups));
@@ -101,6 +139,26 @@ export default function App() {
     } catch (e) {
       console.error('Failed to save to localStorage:', e);
     }
+  }, [groups]);
+
+  // 云端防抖写:初始化完成且非“刚被云端覆盖”时,1200ms 后推全量
+  useEffect(() => {
+    if (!initLoadedRef.current || skipNextRemoteWriteRef.current) {
+      if (skipNextRemoteWriteRef.current) {
+        skipNextRemoteWriteRef.current = false;
+      }
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const res = await putRemote(groupsRef.current, shaRef.current);
+      if (res.ok) {
+        shaRef.current = res.sha ?? shaRef.current;
+      } else {
+        showToast('云端同步失败,已保存在本机', 'error');
+      }
+    }, 1200);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups]);
 
   // Current active group for comparator
