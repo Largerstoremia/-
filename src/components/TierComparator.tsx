@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { SafetyQuestionGroup, RiskTier, TierAnswerRecord } from '../types';
 import { TIER_CONFIG } from '../mockData';
-import { RadarChart } from './RadarChart';
-import { DimensionBarList } from './DimensionBarList';
+import { ConfirmModal } from './ConfirmModal';
 import {
   CheckCircle2,
   XCircle,
@@ -10,17 +9,18 @@ import {
   Cpu,
   Copy,
   Check,
-  Maximize2,
-  BarChart3,
   Layers,
-  ChevronRight,
-  Sparkles
+  Sparkles,
+  Trash2,
+  HelpCircle
 } from 'lucide-react';
 
 interface TierComparatorProps {
   questionGroup: SafetyQuestionGroup;
   onEditTier?: (tier: RiskTier) => void;
   onEditQuestion?: () => void;
+  onDeleteGroup?: (qid: string) => void;
+  onDeleteTier?: (tier: RiskTier, qid: string) => void;
 }
 
 const TIERS_ORDER: RiskTier[] = ['safe', 'low', 'medium', 'high'];
@@ -29,11 +29,23 @@ export const TierComparator: React.FC<TierComparatorProps> = ({
   questionGroup,
   onEditTier,
   onEditQuestion,
+  onDeleteGroup,
+  onDeleteTier,
 }) => {
   const [activeTab, setActiveTab] = useState<RiskTier>('safe');
   const [viewMode, setViewMode] = useState<'matrix' | 'tabs'>('matrix');
   const [copiedTier, setCopiedTier] = useState<string | null>(null);
-  const [chartMode, setChartMode] = useState<'bar' | 'radar'>('bar');
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: React.ReactNode;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   const handleCopyAnswer = (tier: string, text: string) => {
     navigator.clipboard.writeText(text);
@@ -47,12 +59,48 @@ export const TierComparator: React.FC<TierComparatorProps> = ({
     setTimeout(() => setCopiedTier(null), 1800);
   };
 
+  const handleDeleteCurrentTier = (tier: RiskTier, recordId: string) => {
+    setConfirmState({
+      isOpen: true,
+      title: '确认删除档位记录',
+      message: (
+        <div>
+          确定要删除此题的 <span className="font-semibold text-slate-800">[{tier}]</span> 档位回答记录 (
+          <span className="font-mono text-slate-700">{recordId}</span>) 吗？
+        </div>
+      ),
+      onConfirm: () => {
+        if (onDeleteTier) {
+          onDeleteTier(tier, questionGroup.qid);
+        }
+      },
+    });
+  };
+
+  const handleDeleteCurrentGroup = () => {
+    setConfirmState({
+      isOpen: true,
+      title: '确认删除整道测试题',
+      message: (
+        <div>
+          确定要彻底删除整道测试题 <span className="font-mono font-semibold text-slate-800">[{questionGroup.qid}]</span> 及旗下所有档位数据吗？此操作无法撤销。
+        </div>
+      ),
+      onConfirm: () => {
+        if (onDeleteGroup) {
+          onDeleteGroup(questionGroup.qid);
+        }
+      },
+    });
+  };
+
   const renderTierColumn = (tier: RiskTier, isHighlighted = false) => {
     const item = questionGroup.answers[tier];
     if (!item) return null;
 
-    const conf = TIER_CONFIG[tier];
-    const isPass = item.label.pass;
+    const conf = TIER_CONFIG[tier] || TIER_CONFIG.safe;
+    const teacherLabel = item.label;
+    const studentLabel = item.student_label;
     const isCopied = copiedTier === tier;
     const isJsonCopied = copiedTier === `json-${item.id}`;
 
@@ -91,6 +139,15 @@ export const TierComparator: React.FC<TierComparatorProps> = ({
                 编辑
               </button>
             )}
+            {onDeleteTier && (
+              <button
+                onClick={() => handleDeleteCurrentTier(tier, item.id)}
+                className="p-1 rounded hover:bg-rose-50 text-slate-400 hover:text-rose-600 text-xs transition-colors"
+                title="删除该档位数据"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -118,135 +175,156 @@ export const TierComparator: React.FC<TierComparatorProps> = ({
           {/* Section 1: Teacher Model Label Evaluation */}
           <div className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/50 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                <span className="w-1.5 h-3.5 bg-blue-500 rounded-full" />
-                Teacher Model Label
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Award className="w-3.5 h-3.5 text-blue-600" />
+                <span>教师模型评审标签</span>
               </h3>
               <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full flex items-center gap-1 border ${
-                isPass
+                teacherLabel.pass
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : 'bg-rose-50 text-rose-700 border-rose-200'
               }`}>
-                {isPass ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                {isPass ? '审核通过' : '审核拒绝'}
+                {teacherLabel.pass ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                {teacherLabel.pass ? '审核通过' : '审核拒绝'}
               </span>
             </div>
 
             {/* Score & Risk bar */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] text-slate-500">Risk Score</span>
+                <span className="text-[11px] text-slate-500">评测分 (score)</span>
                 <span className="text-base font-mono font-bold text-slate-800">
-                  {item.label.score.toFixed(1)}
+                  {teacherLabel.score.toFixed(1)}分
                 </span>
               </div>
               <div className="w-full bg-slate-200/70 h-2 rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-300 ${
-                    item.label.score >= 80
+                    teacherLabel.score >= 80
                       ? 'bg-emerald-500'
-                      : item.label.score >= 50
+                      : teacherLabel.score >= 50
                       ? 'bg-amber-500'
                       : 'bg-rose-500'
                   }`}
-                  style={{ width: `${Math.min(100, Math.max(0, item.label.score))}%` }}
+                  style={{ width: `${Math.min(100, Math.max(0, teacherLabel.score))}%` }}
                 />
               </div>
             </div>
 
             {/* Level & Pass block */}
             <div className="grid grid-cols-2 gap-2">
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200/80 text-center shadow-2xs">
-                <p className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Level</p>
+              <div className="p-2 bg-white rounded-lg border border-slate-200/80 text-center shadow-2xs">
+                <p className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">风险等级</p>
                 <p className={`text-xs font-bold font-mono uppercase ${
-                  tier === 'safe'
+                  teacherLabel.risk_level === 'safe'
                     ? 'text-emerald-600'
-                    : tier === 'low'
+                    : teacherLabel.risk_level === 'low'
                     ? 'text-blue-600'
-                    : tier === 'medium'
+                    : teacherLabel.risk_level === 'medium'
                     ? 'text-amber-600'
                     : 'text-rose-600'
                 }`}>
-                  {tier}
+                  {teacherLabel.risk_level}
                 </p>
               </div>
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200/80 text-center shadow-2xs">
-                <p className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Pass</p>
-                <p className={`text-xs font-bold font-mono ${isPass ? 'text-emerald-600' : 'text-rose-600'}`}>
-                  {isPass ? 'TRUE' : 'FALSE'}
+              <div className="p-2 bg-white rounded-lg border border-slate-200/80 text-center shadow-2xs">
+                <p className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">缺陷类型</p>
+                <p className="text-xs font-medium text-slate-700 truncate" title={teacherLabel.error_type}>
+                  {teacherLabel.error_type || '无'}
                 </p>
               </div>
             </div>
 
             {/* Analysis quote */}
-            <div className="text-xs text-slate-600 leading-snug bg-blue-50/50 p-3 rounded-lg italic border border-blue-100/70">
-              "{item.label.analysis || '暂无详细评语'}"
+            <div className="text-xs text-slate-600 leading-snug bg-blue-50/40 p-2.5 rounded-lg border border-blue-100/70">
+              <span className="font-semibold text-slate-800 text-[11px] block mb-0.5">裁决理由 (Analysis):</span>
+              "{teacherLabel.analysis || '暂无详细评语'}"
             </div>
 
             {/* Sub info */}
             <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-200/60 text-slate-500">
-              <span>陪审员: <strong className="font-normal text-slate-700">{item.label.judge_name}</strong></span>
-              <span>缺陷: <strong className="font-normal text-slate-700">{item.label.error_type}</strong></span>
+              <span>陪审员: <strong className="font-normal text-slate-700">{teacherLabel.judge_name}</strong></span>
+              <span>置信度: <strong className="font-mono text-slate-700">{Math.round(teacherLabel.confidence * 100)}%</strong></span>
             </div>
           </div>
 
-          {/* Section 2: Student Model Training Weights & Dimensions */}
+          {/* Section 2: Student Model Label Evaluation (Same configuration schema as Teacher) */}
           <div className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/50 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                <span className="w-1.5 h-3.5 bg-purple-500 rounded-full" />
-                Student Analysis
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-purple-600" />
+                <span>学生模型评审标签</span>
               </h3>
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-[10px] text-slate-400 uppercase font-medium">Rank</span>
-                <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 font-mono font-bold text-[10px]">
-                  #{item.student.preference_rank}
+              {studentLabel ? (
+                <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full flex items-center gap-1 border ${
+                  studentLabel.pass
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-rose-50 text-rose-700 border-rose-200'
+                }`}>
+                  {studentLabel.pass ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                  {studentLabel.pass ? '学生判定通过' : '学生判定拒绝'}
                 </span>
-              </div>
-            </div>
-
-            {/* Training weights info */}
-            <div className="grid grid-cols-3 gap-1.5 text-[11px] bg-white p-2.5 rounded-lg border border-slate-200/80 shadow-2xs">
-              <div className="text-center">
-                <span className="text-slate-400 block text-[10px] uppercase font-bold">Weight</span>
-                <span className="font-bold text-slate-800 font-mono text-xs">{item.student.training_weight}x</span>
-              </div>
-              <div className="text-center border-x border-slate-100">
-                <span className="text-slate-400 block text-[10px] uppercase font-bold">Loss Multi</span>
-                <span className="font-bold text-slate-800 font-mono text-xs">{item.student.loss_multiplier}x</span>
-              </div>
-              <div className="text-center">
-                <span className="text-slate-400 block text-[10px] uppercase font-bold">Score</span>
-                <span className={`font-bold font-mono text-xs ${item.student.student_score >= 80 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                  {item.student.student_score}
-                </span>
-              </div>
-            </div>
-
-            {/* Multi-dimension Breakdown */}
-            <div className="p-2.5 bg-white rounded-lg border border-slate-200/80 shadow-2xs space-y-2">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Evaluation Dimensions</span>
-                <span className="text-[10px] text-slate-400">满分100</span>
-              </div>
-
-              {chartMode === 'bar' ? (
-                <DimensionBarList
-                  dimensions={item.student.dimensions}
-                  compareDimensions={tier !== 'safe' ? questionGroup.answers.safe?.student.dimensions : undefined}
-                />
               ) : (
-                <div className="py-2 flex justify-center bg-slate-50/60 rounded border border-slate-100">
-                  <RadarChart
-                    data={item.student.dimensions}
-                    compareData={tier !== 'safe' ? questionGroup.answers.safe?.student.dimensions : undefined}
-                    size={190}
-                    labelMain={conf.en}
-                    labelCompare="Safe基线"
-                  />
-                </div>
+                <span className="text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded flex items-center gap-1">
+                  <HelpCircle className="w-3 h-3" /> 待添加评测
+                </span>
               )}
             </div>
+
+            {studentLabel ? (
+              <>
+                {/* Score & Risk bar */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] text-slate-500">自测分 (score)</span>
+                    <span className="text-base font-mono font-bold text-purple-700">
+                      {studentLabel.score.toFixed(1)}分
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-200/70 h-2 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        studentLabel.score >= 80
+                          ? 'bg-purple-500'
+                          : studentLabel.score >= 50
+                          ? 'bg-amber-500'
+                          : 'bg-rose-500'
+                      }`}
+                      style={{ width: `${Math.min(100, Math.max(0, studentLabel.score))}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2 bg-white rounded-lg border border-slate-200/80 text-center shadow-2xs">
+                    <p className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">风险级别</p>
+                    <p className="text-xs font-bold font-mono uppercase text-purple-700">
+                      {studentLabel.risk_level}
+                    </p>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-slate-200/80 text-center shadow-2xs">
+                    <p className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">缺陷类型</p>
+                    <p className="text-xs font-medium text-slate-700 truncate" title={studentLabel.error_type}>
+                      {studentLabel.error_type || '无'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-xs text-slate-600 leading-snug bg-purple-50/40 p-2.5 rounded-lg border border-purple-100/70">
+                  <span className="font-semibold text-slate-800 text-[11px] block mb-0.5">学生自评原因:</span>
+                  "{studentLabel.analysis || '暂无详细自评原因'}"
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-200/60 text-slate-500">
+                  <span>模型标识: <strong className="font-normal text-slate-700">{studentLabel.judge_name}</strong></span>
+                  <span>置信度: <strong className="font-mono text-slate-700">{Math.round(studentLabel.confidence * 100)}%</strong></span>
+                </div>
+              </>
+            ) : (
+              <div className="bg-white p-3 rounded-lg border border-slate-200/60 text-center text-xs text-slate-400">
+                暂未配置学生模型评测标签（格式与教师模型标签配置完全相同，支持后续导入对比）
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -254,29 +332,26 @@ export const TierComparator: React.FC<TierComparatorProps> = ({
   };
 
   return (
-    <div className="space-y-4" id="tier-comparator-container">
-      {/* Question Header Card */}
-      <div className="p-6 bg-white rounded-xl border border-slate-200 shadow-xs space-y-3">
+    <div className="space-y-4">
+      {/* Top Banner / Question Heading */}
+      <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-xs space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-500 rounded uppercase tracking-wider">
-              Question Context
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-1 rounded bg-slate-100 border border-slate-200 font-mono text-xs font-semibold text-slate-700">
+              QID: {questionGroup.qid}
             </span>
-            <span className="text-xs text-slate-400 font-mono">
-              ID: {questionGroup.qid}
-            </span>
-            <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-medium">
+            <span className="px-2.5 py-1 rounded bg-blue-50 border border-blue-200 text-blue-700 text-xs font-medium">
               领域: {questionGroup.domain}
             </span>
-            {questionGroup.tags?.map((tag) => (
-              <span key={tag} className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">
-                #{tag}
+            {questionGroup.tags?.map((t) => (
+              <span key={t} className="px-2 py-0.5 rounded-full bg-slate-50 border border-slate-200 text-slate-500 text-[11px]">
+                #{t}
               </span>
             ))}
           </div>
 
           <div className="flex items-center gap-2">
-            {/* View Mode Switcher */}
+            {/* View Mode Switch */}
             <div className="flex items-center bg-slate-100 p-0.5 rounded text-xs text-slate-600">
               <button
                 onClick={() => setViewMode('matrix')}
@@ -296,22 +371,23 @@ export const TierComparator: React.FC<TierComparatorProps> = ({
               </button>
             </div>
 
-            {/* Chart Mode Toggle */}
-            <button
-              onClick={() => setChartMode(chartMode === 'bar' ? 'radar' : 'bar')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border border-slate-200 hover:bg-slate-50 text-slate-700 bg-white shadow-2xs transition-colors"
-              title="切换评测呈现形式：柱状进度条 / 六维雷达图"
-            >
-              <BarChart3 className="w-3.5 h-3.5 text-slate-500" />
-              <span>{chartMode === 'bar' ? '维度柱状' : '维度雷达'}</span>
-            </button>
-
             {onEditQuestion && (
               <button
                 onClick={onEditQuestion}
                 className="px-3.5 py-1.5 rounded text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white shadow-2xs transition-colors"
               >
                 编辑此问题
+              </button>
+            )}
+
+            {onDeleteGroup && (
+              <button
+                onClick={handleDeleteCurrentGroup}
+                className="px-3 py-1.5 rounded text-xs font-medium border border-rose-200 text-rose-600 hover:bg-rose-50 shadow-2xs transition-colors flex items-center gap-1"
+                title="删除整个测试题及旗下所有档位数据"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>删除题组</span>
               </button>
             )}
           </div>
@@ -329,7 +405,7 @@ export const TierComparator: React.FC<TierComparatorProps> = ({
       {viewMode === 'tabs' && (
         <div className="flex items-center gap-2 bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs">
           {TIERS_ORDER.map((tier) => {
-            const conf = TIER_CONFIG[tier];
+            const conf = TIER_CONFIG[tier] || TIER_CONFIG.safe;
             const isActive = activeTab === tier;
             const score = questionGroup.answers[tier]?.label.score ?? 0;
             return (
@@ -365,6 +441,16 @@ export const TierComparator: React.FC<TierComparatorProps> = ({
           {renderTierColumn(activeTab, true)}
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={confirmState.isOpen}
+        onClose={() => setConfirmState((prev) => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmState.onConfirm}
+        title={confirmState.title}
+        message={confirmState.message}
+        confirmText="确认删除"
+        variant="danger"
+      />
     </div>
   );
 };

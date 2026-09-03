@@ -5,8 +5,9 @@ import { TierComparator } from './components/TierComparator';
 import { DataTable } from './components/DataTable';
 import { DatasetAnalytics } from './components/DatasetAnalytics';
 import { QuestionModal } from './components/QuestionModal';
-import { ImportExportModal } from './components/ImportExportModal';
+import { ImportExportModal, ExportFilterPreset } from './components/ImportExportModal';
 import { DetailModal } from './components/DetailModal';
+import { ConfirmModal } from './components/ConfirmModal';
 import {
   ShieldCheck,
   Layers,
@@ -16,14 +17,12 @@ import {
   Download,
   Upload,
   CheckCircle2,
-  ChevronDown,
   Database,
-  Sparkles,
-  RefreshCw,
-  FolderOpen,
   Search,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  Trash2,
+  Info
 } from 'lucide-react';
 
 const STORAGE_KEY = 'CS_STUDIO_DATA_GROUPS_V1';
@@ -57,11 +56,40 @@ export default function App() {
   const [editingTier, setEditingTier] = useState<RiskTier>('safe');
 
   const [isImportExportOpen, setIsImportExportOpen] = useState(false);
+  const [importExportTab, setImportExportTab] = useState<'export' | 'import'>('export');
+  const [exportPreset, setExportPreset] = useState<ExportFilterPreset | undefined>(undefined);
   const [viewingRecord, setViewingRecord] = useState<TierAnswerRecord | null>(null);
+
+  const handleOpenExportModal = (preset?: ExportFilterPreset) => {
+    setImportExportTab('export');
+    setExportPreset(preset);
+    setIsImportExportOpen(true);
+  };
+
+  const handleOpenImportModal = () => {
+    setImportExportTab('import');
+    setExportPreset(undefined);
+    setIsImportExportOpen(true);
+  };
 
   const [saveToast, setSaveToast] = useState(false);
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // General toast notification
+  const [toastMessage, setToastMessage] = useState<{
+    text: string;
+    type: 'success' | 'info' | 'error';
+  } | null>(null);
+
+  const [isConfirmResetOpen, setIsConfirmResetOpen] = useState(false);
+
+  const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
+    setToastMessage({ text, type });
+    setTimeout(() => {
+      setToastMessage((cur) => (cur?.text === text ? null : cur));
+    }, 3500);
+  };
 
   // Sync to localStorage whenever groups change
   useEffect(() => {
@@ -76,7 +104,7 @@ export default function App() {
   }, [groups]);
 
   // Current active group for comparator
-  const currentGroup = groups.find((g) => g.qid === selectedQid) || groups[0] || INITIAL_SAFETY_GROUPS[0];
+  const currentGroup = groups.find((g) => g.qid === selectedQid) || groups[0];
 
   // Filtered groups for sidebar
   const sidebarGroups = groups.filter((g) => {
@@ -100,38 +128,136 @@ export default function App() {
       return [savedGroup, ...prev];
     });
     setSelectedQid(savedGroup.qid);
+    showToast(`测试题 [${savedGroup.qid}] 已保存并同步`, 'success');
   };
 
+  // Delete entire question group
   const handleDeleteGroup = (targetQid: string) => {
     setGroups((prev) => {
       const filtered = prev.filter((g) => g.qid !== targetQid);
-      if (selectedQid === targetQid && filtered.length > 0) {
-        setSelectedQid(filtered[0].qid);
+      if (selectedQid === targetQid) {
+        setSelectedQid(filtered.length > 0 ? filtered[0].qid : '');
       }
       return filtered;
     });
+    showToast(`已彻底删除测试题 [${targetQid}] 及其所有档位数据`, 'info');
   };
 
+  // Delete specific single record
+  const handleDeleteRecord = (recordId: string, qid?: string) => {
+    setGroups((prev) => {
+      return prev
+        .map((g) => {
+          // If qid is provided, match by qid or verify if this group owns the recordId
+          const hasRecord = (['safe', 'low', 'medium', 'high'] as RiskTier[]).some(
+            (t) => g.answers[t]?.id === recordId
+          );
+          if (qid && g.qid !== qid && !hasRecord) return g;
+
+          const nextAnswers = { ...g.answers };
+          let changed = false;
+          (['safe', 'low', 'medium', 'high'] as RiskTier[]).forEach((t) => {
+            if (nextAnswers[t]?.id === recordId) {
+              delete nextAnswers[t];
+              changed = true;
+            }
+          });
+          if (!changed) return g;
+          return { ...g, answers: nextAnswers };
+        })
+        .filter((g) => Object.keys(g.answers).length > 0);
+    });
+    if (viewingRecord?.id === recordId) {
+      setViewingRecord(null);
+    }
+    showToast(`已从评测库删除记录 [${recordId}]`, 'info');
+  };
+
+  // Delete specific tier within a group
+  const handleDeleteTier = (tier: RiskTier, qid: string) => {
+    setGroups((prev) => {
+      return prev
+        .map((g) => {
+          if (g.qid !== qid) return g;
+          const nextAnswers = { ...g.answers };
+          delete nextAnswers[tier];
+          return { ...g, answers: nextAnswers };
+        })
+        .filter((g) => Object.keys(g.answers).length > 0);
+    });
+    showToast(`已删除 [${qid}] 题目的 [${tier}] 档位数据`, 'info');
+  };
+
+  // Batch delete multiple records
+  const handleBatchDeleteRecords = (recordIds: string[]) => {
+    const idSet = new Set(recordIds);
+    setGroups((prev) => {
+      return prev
+        .map((g) => {
+          const nextAnswers = { ...g.answers };
+          let changed = false;
+          (['safe', 'low', 'medium', 'high'] as RiskTier[]).forEach((t) => {
+            if (nextAnswers[t] && idSet.has(nextAnswers[t]!.id)) {
+              delete nextAnswers[t];
+              changed = true;
+            }
+          });
+          if (!changed) return g;
+          return { ...g, answers: nextAnswers };
+        })
+        .filter((g) => Object.keys(g.answers).length > 0);
+    });
+    showToast(`已成功批量删除 ${recordIds.length} 条评测记录`, 'info');
+  };
+
+  // Clear all data
+  const handleClearAllData = () => {
+    setGroups([]);
+    setSelectedQid('');
+    setViewingRecord(null);
+    showToast('已清空当前评测数据池中的所有记录', 'info');
+  };
+
+  // Import groups (merge or replace)
   const handleImportGroups = (newGroups: SafetyQuestionGroup[], mode: 'merge' | 'replace') => {
     if (mode === 'replace') {
       setGroups(newGroups);
       if (newGroups.length > 0) setSelectedQid(newGroups[0].qid);
+      showToast(`已覆盖导入 ${newGroups.length} 个测试题`, 'success');
     } else {
       setGroups((prev) => {
-        const existingMap = new Map(prev.map((g) => [g.qid, g]));
-        newGroups.forEach((g) => existingMap.set(g.qid, g));
+        const existingMap = new Map<string, SafetyQuestionGroup>(prev.map((g) => [g.qid, g]));
+        newGroups.forEach((g) => {
+          if (existingMap.has(g.qid)) {
+            // merge answers
+            const prevGroup = existingMap.get(g.qid)!;
+            const mergedAnswers = { ...prevGroup.answers, ...g.answers };
+            existingMap.set(g.qid, {
+              ...prevGroup,
+              ...g,
+              answers: mergedAnswers,
+            });
+          } else {
+            existingMap.set(g.qid, g);
+          }
+        });
         return Array.from(existingMap.values());
       });
       if (newGroups.length > 0) setSelectedQid(newGroups[0].qid);
+      showToast(`已合并导入 ${newGroups.length} 个测试题`, 'success');
     }
   };
 
   const handleResetBenchmark = () => {
-    if (confirm('确认恢复系统初始评测基准数据集？现有修改将被覆盖。')) {
-      setGroups(INITIAL_SAFETY_GROUPS);
-      setSelectedQid(INITIAL_SAFETY_GROUPS[0].qid);
-      setIsImportExportOpen(false);
-    }
+    setIsConfirmResetOpen(true);
+  };
+
+  const handleExecuteResetBenchmark = () => {
+    setGroups(INITIAL_SAFETY_GROUPS);
+    setSelectedQid(INITIAL_SAFETY_GROUPS[0]?.qid || '');
+    setIsImportExportOpen(false);
+    setIsConfirmResetOpen(false);
+    showToast('已成功恢复系统初始评测基准数据集', 'success');
   };
 
   const totalAnswerCount = groups.reduce((acc, g) => {
@@ -153,14 +279,23 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <button
-            onClick={() => setIsImportExportOpen(true)}
-            className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-50 transition-colors flex items-center gap-2"
-            title="导入 / 导出 JSON"
+            onClick={() => handleOpenExportModal()}
+            className="px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            title="打开评测集条件导出面板（支持按一致性、Medium等档位筛选）"
           >
-            <Download className="w-4 h-4 text-slate-500" />
-            <span>Import Logs</span>
+            <Download className="w-4 h-4 text-blue-600" />
+            <span>条件筛选导出</span>
+          </button>
+
+          <button
+            onClick={handleOpenImportModal}
+            className="px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            title="上传数据（教师/学生模型）"
+          >
+            <Upload className="w-4 h-4 text-slate-500" />
+            <span>导入数据</span>
           </button>
 
           <button
@@ -169,83 +304,82 @@ export default function App() {
               setEditingTier('safe');
               setIsQuestionModalOpen(true);
             }}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 flex items-center gap-2 shadow-2xs transition-colors"
+            className="px-3.5 py-2 text-xs font-semibold text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors flex items-center gap-2 cursor-pointer shadow-2xs"
           >
             <Plus className="w-4 h-4" />
-            <span>新建评测条目</span>
+            <span>新增评测题目</span>
           </button>
         </div>
       </header>
 
-      {/* Sub Navigation Bar Tabs */}
-      <div className="h-11 bg-white border-b border-slate-200 px-6 lg:px-8 flex items-center justify-between shrink-0 text-xs">
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setActiveTab('comparator')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-all ${
-              activeTab === 'comparator'
-                ? 'bg-slate-900 text-white shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>四档对比矩阵</span>
-          </button>
+      {/* Navigation Sub-bar */}
+      <div className="h-12 bg-white border-b border-slate-200 px-6 lg:px-8 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-2">
+          {/* Tab buttons */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-md text-xs">
+            <button
+              onClick={() => setActiveTab('comparator')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded font-medium transition-all ${
+                activeTab === 'comparator'
+                  ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>四档精细研判</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('table')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded font-medium transition-all ${
+                activeTab === 'table'
+                  ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <TableProperties className="w-3.5 h-3.5" />
+              <span>数据表格 & 校验 ({totalAnswerCount})</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('analytics')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded font-medium transition-all ${
+                activeTab === 'analytics'
+                  ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>评测标签统计分析</span>
+            </button>
+          </div>
 
-          <button
-            onClick={() => setActiveTab('table')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-all ${
-              activeTab === 'table'
-                ? 'bg-slate-900 text-white shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <TableProperties className="w-3.5 h-3.5" />
-            <span>数据管理列表</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('analytics')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-all ${
-              activeTab === 'analytics'
-                ? 'bg-slate-900 text-white shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <BarChart3 className="w-3.5 h-3.5" />
-            <span>大盘统计看板</span>
-          </button>
-        </div>
-
-        <div className="flex items-center gap-3">
           {activeTab === 'comparator' && (
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 transition-colors"
-              title={isSidebarOpen ? '收起左侧题目列表' : '展开左侧题目列表'}
+              className="ml-3 p-1.5 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+              title={isSidebarOpen ? '收起题库列表' : '展开题库列表'}
             >
-              {isSidebarOpen ? <PanelLeftClose className="w-3.5 h-3.5" /> : <PanelLeftOpen className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline">{isSidebarOpen ? '收起侧栏' : '展开侧栏'}</span>
+              {isSidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
             </button>
           )}
+        </div>
 
-          <div className="hidden sm:flex items-center gap-1.5 text-slate-500 font-mono text-[11px]">
-            <Database className="w-3.5 h-3.5 text-slate-400" />
-            <span>{groups.length} 题 / {totalAnswerCount} 档回答</span>
-          </div>
-
+        {/* Global info pill */}
+        <div className="flex items-center gap-3 text-xs text-slate-500">
           {saveToast && (
-            <div className="flex items-center gap-1 text-[11px] text-emerald-600 font-medium px-2 py-0.5 bg-emerald-50 rounded border border-emerald-200">
-              <CheckCircle2 className="w-3 h-3" /> 已存
-            </div>
+            <span className="flex items-center gap-1 text-emerald-600 text-[11px] font-mono animate-fade-in">
+              <CheckCircle2 className="w-3 h-3" /> 已实时保存
+            </span>
           )}
+          <span className="font-mono text-slate-400">
+            {groups.length} 道测试题 / {totalAnswerCount} 条档位数据
+          </span>
         </div>
       </div>
 
-      {/* Main Content Area */}
+      {/* Main View Area */}
       {activeTab === 'comparator' ? (
         <main className="flex-1 flex overflow-hidden">
-          {/* Master Aside List */}
+          {/* Left Sidebar List for Questions */}
           {isSidebarOpen && (
             <aside className="w-72 sm:w-80 bg-white border-r border-slate-200 flex flex-col shrink-0">
               <div className="p-3.5 border-b border-slate-100">
@@ -254,7 +388,7 @@ export default function App() {
                     type="text"
                     value={sidebarSearch}
                     onChange={(e) => setSidebarSearch(e.target.value)}
-                    placeholder="Search records..."
+                    placeholder="搜索测试题..."
                     className="w-full pl-9 pr-3 py-2 text-xs bg-slate-100 border-none rounded focus:ring-2 focus:ring-blue-500 text-slate-800 placeholder-slate-400 outline-none"
                   />
                   <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
@@ -290,9 +424,9 @@ export default function App() {
                         {g.question}
                       </p>
                       <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400 font-mono">
-                        <span>Safe: {safeScore ?? '-'}分</span>
+                        <span>Safe: {safeScore !== undefined ? `${safeScore.toFixed(0)}分` : '-'}</span>
                         <span>·</span>
-                        <span>4 档对比</span>
+                        <span>{Object.keys(g.answers).length} 档数据</span>
                       </div>
                     </div>
                   );
@@ -309,7 +443,7 @@ export default function App() {
 
           {/* Detailed Comparator Area */}
           <section className="flex-1 overflow-y-auto p-6 space-y-6">
-            {currentGroup && (
+            {currentGroup ? (
               <TierComparator
                 questionGroup={currentGroup}
                 onEditTier={(tier) => {
@@ -322,7 +456,13 @@ export default function App() {
                   setEditingTier('safe');
                   setIsQuestionModalOpen(true);
                 }}
+                onDeleteGroup={handleDeleteGroup}
+                onDeleteTier={handleDeleteTier}
               />
+            ) : (
+              <div className="bg-white rounded-xl p-12 text-center border border-slate-200 text-slate-400 text-xs">
+                当前题库为空，请点击右上角「新增评测题目」或在「导入/导出」中载入数据。
+              </div>
             )}
           </section>
         </main>
@@ -341,7 +481,13 @@ export default function App() {
                 setIsQuestionModalOpen(true);
               }}
               onDeleteGroup={handleDeleteGroup}
+              onDeleteRecord={handleDeleteRecord}
+              onBatchDeleteRecords={handleBatchDeleteRecords}
+              onClearAllData={handleClearAllData}
+              onResetBenchmark={handleResetBenchmark}
               onViewRecordDetail={(record) => setViewingRecord(record)}
+              onImportGroups={handleImportGroups}
+              onOpenExport={handleOpenExportModal}
             />
           </div>
         </main>
@@ -353,14 +499,14 @@ export default function App() {
         </main>
       )}
 
-      {/* Professional Polish Footer */}
+      {/* Footer */}
       <footer className="h-10 bg-slate-900 text-slate-400 text-[10px] flex items-center justify-between px-6 lg:px-8 border-t border-slate-800 shrink-0 uppercase tracking-widest font-mono select-none">
         <span>© 2024 Content Security Inspector Pro</span>
         <span className="flex items-center gap-2">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          System Status: Healthy
+          系统状态: 正常运行
         </span>
-        <span className="hidden sm:inline">Database: content_eval_v2.01</span>
+        <span className="hidden sm:inline">教师模型与学生模型标签格式统一</span>
       </footer>
 
       {/* Modals */}
@@ -378,9 +524,50 @@ export default function App() {
         groups={groups}
         onImportGroups={handleImportGroups}
         onResetBenchmark={handleResetBenchmark}
+        initialTab={importExportTab}
+        initialExportPreset={exportPreset}
       />
 
-      <DetailModal record={viewingRecord} onClose={() => setViewingRecord(null)} />
+      <DetailModal
+        record={viewingRecord}
+        onClose={() => setViewingRecord(null)}
+        onDeleteRecord={handleDeleteRecord}
+      />
+
+      {/* Confirmation Modal for Resetting System Benchmark */}
+      <ConfirmModal
+        isOpen={isConfirmResetOpen}
+        onClose={() => setIsConfirmResetOpen(false)}
+        onConfirm={handleExecuteResetBenchmark}
+        title="确认恢复系统初始评测基准"
+        message="确定要恢复系统初始评测基准数据集吗？当前数据池中所有自定义修改与上传样本将被初始测试集覆盖。"
+        confirmText="确认恢复基准数据"
+        variant="warning"
+      />
+
+      {/* Floating Global Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-14 right-6 z-50 animate-in slide-in-from-bottom-3 duration-200">
+          <div
+            className={`px-4 py-2.5 rounded-xl shadow-lg border text-xs font-semibold flex items-center gap-2 ${
+              toastMessage.type === 'success'
+                ? 'bg-emerald-900 text-emerald-100 border-emerald-700 shadow-emerald-950/20'
+                : toastMessage.type === 'info'
+                ? 'bg-slate-900 text-slate-100 border-slate-700 shadow-slate-950/20'
+                : 'bg-rose-900 text-rose-100 border-rose-700 shadow-rose-950/20'
+            }`}
+          >
+            {toastMessage.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : toastMessage.type === 'info' ? (
+              <Info className="w-4 h-4 text-blue-400 shrink-0" />
+            ) : (
+              <Trash2 className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span>{toastMessage.text}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

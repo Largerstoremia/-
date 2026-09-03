@@ -1,16 +1,18 @@
 import React, { useMemo } from 'react';
-import { SafetyQuestionGroup, RiskTier, StudentEvalDimensions } from '../types';
-import { TIER_CONFIG, DOMAIN_LABELS } from '../mockData';
-import { RadarChart } from './RadarChart';
+import { SafetyQuestionGroup, RiskTier } from '../types';
+import { TIER_CONFIG } from '../mockData';
+import { evaluateConsistency, DOMAIN_CONFIG } from '../utils';
 import {
-  BarChart,
   ShieldCheck,
   TrendingUp,
   AlertTriangle,
-  FileCheck2,
   PieChart,
-  Sliders,
-  Scale
+  Scale,
+  CheckCircle2,
+  Cpu,
+  Award,
+  Layers,
+  FileText
 } from 'lucide-react';
 
 interface DatasetAnalyticsProps {
@@ -22,39 +24,39 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({ groups }) =>
     let totalQuestions = groups.length;
     let totalAnswers = 0;
     let passCount = 0;
+    let consistentCount = 0;
+    let studentEvaluatedCount = 0;
 
-    const tierStats: Record<RiskTier, { total: number; pass: number; avgTeacherScore: number; avgStudentScore: number; avgWeight: number }> = {
-      safe: { total: 0, pass: 0, avgTeacherScore: 0, avgStudentScore: 0, avgWeight: 0 },
-      low: { total: 0, pass: 0, avgTeacherScore: 0, avgStudentScore: 0, avgWeight: 0 },
-      medium: { total: 0, pass: 0, avgTeacherScore: 0, avgStudentScore: 0, avgWeight: 0 },
-      high: { total: 0, pass: 0, avgTeacherScore: 0, avgStudentScore: 0, avgWeight: 0 },
+    const tierStats: Record<RiskTier, {
+      total: number;
+      pass: number;
+      avgTeacherScore: number;
+      avgStudentScore: number;
+      studentCount: number;
+    }> = {
+      safe: { total: 0, pass: 0, avgTeacherScore: 0, avgStudentScore: 0, studentCount: 0 },
+      low: { total: 0, pass: 0, avgTeacherScore: 0, avgStudentScore: 0, studentCount: 0 },
+      medium: { total: 0, pass: 0, avgTeacherScore: 0, avgStudentScore: 0, studentCount: 0 },
+      high: { total: 0, pass: 0, avgTeacherScore: 0, avgStudentScore: 0, studentCount: 0 },
     };
 
-    const domainCount: Record<string, number> = {};
-
-    // Dimension accumulators for Safe and High tiers
-    const safeDimsSum: Record<keyof StudentEvalDimensions, number> = {
-      bias_fairness: 0,
-      toxicity: 0,
-      compliance_refusal: 0,
-      helpfulness: 0,
-      truthfulness: 0,
-      robustness: 0,
+    const domainCount: Record<string, number> = {
+      bias: 0,
+      porn: 0,
+      privacy: 0,
+      selfharm: 0,
     };
-    let safeCount = 0;
 
-    const highDimsSum: Record<keyof StudentEvalDimensions, number> = {
-      bias_fairness: 0,
-      toxicity: 0,
-      compliance_refusal: 0,
-      helpfulness: 0,
-      truthfulness: 0,
-      robustness: 0,
+    const tierScores: Record<RiskTier, { teacherTotal: number; studentTotal: number }> = {
+      safe: { teacherTotal: 0, studentTotal: 0 },
+      low: { teacherTotal: 0, studentTotal: 0 },
+      medium: { teacherTotal: 0, studentTotal: 0 },
+      high: { teacherTotal: 0, studentTotal: 0 },
     };
-    let highCount = 0;
 
     groups.forEach((g) => {
-      domainCount[g.domain] = (domainCount[g.domain] || 0) + 1;
+      const d = g.domain || 'bias';
+      domainCount[d] = (domainCount[d] || 0) + 1;
 
       (['safe', 'low', 'medium', 'high'] as RiskTier[]).forEach((tier) => {
         const item = g.answers[tier];
@@ -65,146 +67,114 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({ groups }) =>
             passCount++;
             tierStats[tier].pass++;
           }
-          tierStats[tier].avgTeacherScore += item.label.score;
-          tierStats[tier].avgStudentScore += item.student.student_score;
-          tierStats[tier].avgWeight += item.student.training_weight;
 
-          if (tier === 'safe') {
-            safeCount++;
-            Object.keys(safeDimsSum).forEach((k) => {
-              const key = k as keyof StudentEvalDimensions;
-              safeDimsSum[key] += item.student.dimensions[key] ?? 0;
-            });
-          } else if (tier === 'high') {
-            highCount++;
-            Object.keys(highDimsSum).forEach((k) => {
-              const key = k as keyof StudentEvalDimensions;
-              highDimsSum[key] += item.student.dimensions[key] ?? 0;
-            });
+          tierScores[tier].teacherTotal += item.label.score;
+
+          if (item.student_label) {
+            studentEvaluatedCount++;
+            tierStats[tier].studentCount++;
+            tierScores[tier].studentTotal += item.student_label.score;
+          }
+
+          if (evaluateConsistency(item).isConsistent) {
+            consistentCount++;
           }
         }
       });
     });
 
     // Compute averages
-    (['safe', 'low', 'medium', 'high'] as RiskTier[]).forEach((tier) => {
-      const count = tierStats[tier].total || 1;
-      tierStats[tier].avgTeacherScore = Math.round(tierStats[tier].avgTeacherScore / count);
-      tierStats[tier].avgStudentScore = Math.round(tierStats[tier].avgStudentScore / count);
-      tierStats[tier].avgWeight = Number((tierStats[tier].avgWeight / count).toFixed(2));
+    (['safe', 'low', 'medium', 'high'] as RiskTier[]).forEach((t) => {
+      const cnt = tierStats[t].total;
+      tierStats[t].avgTeacherScore = cnt > 0 ? Math.round(tierScores[t].teacherTotal / cnt) : 0;
+      const sCnt = tierStats[t].studentCount;
+      tierStats[t].avgStudentScore = sCnt > 0 ? Math.round(tierScores[t].studentTotal / sCnt) : 0;
     });
-
-    const safeAvgDims: StudentEvalDimensions = {
-      bias_fairness: safeCount ? Math.round(safeDimsSum.bias_fairness / safeCount) : 95,
-      toxicity: safeCount ? Math.round(safeDimsSum.toxicity / safeCount) : 98,
-      compliance_refusal: safeCount ? Math.round(safeDimsSum.compliance_refusal / safeCount) : 97,
-      helpfulness: safeCount ? Math.round(safeDimsSum.helpfulness / safeCount) : 92,
-      truthfulness: safeCount ? Math.round(safeDimsSum.truthfulness / safeCount) : 98,
-      robustness: safeCount ? Math.round(safeDimsSum.robustness / safeCount) : 96,
-    };
-
-    const highAvgDims: StudentEvalDimensions = {
-      bias_fairness: highCount ? Math.round(highDimsSum.bias_fairness / highCount) : 25,
-      toxicity: highCount ? Math.round(highDimsSum.toxicity / highCount) : 10,
-      compliance_refusal: highCount ? Math.round(highDimsSum.compliance_refusal / highCount) : 8,
-      helpfulness: highCount ? Math.round(highDimsSum.helpfulness / highCount) : 12,
-      truthfulness: highCount ? Math.round(highDimsSum.truthfulness / highCount) : 15,
-      robustness: highCount ? Math.round(highDimsSum.robustness / highCount) : 18,
-    };
 
     return {
       totalQuestions,
       totalAnswers,
-      overallPassRate: totalAnswers ? Math.round((passCount / totalAnswers) * 100) : 0,
+      passRate: totalAnswers > 0 ? Math.round((passCount / totalAnswers) * 100) : 0,
+      consistentRate: totalAnswers > 0 ? Math.round((consistentCount / totalAnswers) * 100) : 0,
+      consistentCount,
+      inconsistentCount: totalAnswers - consistentCount,
+      studentEvaluatedCount,
       tierStats,
       domainCount,
-      safeAvgDims,
-      highAvgDims,
     };
   }, [groups]);
 
   return (
-    <div className="space-y-6" id="dataset-analytics-dashboard">
-      {/* KPI Overview Cards */}
+    <div className="space-y-6">
+      {/* 1. Header Overview Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-medium">总评估问题数</span>
-            <FileCheck2 className="w-4 h-4 text-blue-600" />
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+            <Layers className="w-5 h-5" />
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono text-slate-900">{stats.totalQuestions}</span>
-            <span className="text-xs text-slate-500">条核心Query</span>
-          </div>
-          <div className="mt-2 text-[11px] text-slate-500 flex items-center gap-1">
-            <span className="font-mono font-medium text-slate-700">{stats.totalAnswers}</span>
-            <span>档独立模型回答样本</span>
+          <div>
+            <p className="text-xs text-slate-500 font-medium">总测试题量</p>
+            <p className="text-xl font-bold font-mono text-slate-900">{stats.totalQuestions} 道题</p>
+            <p className="text-[11px] text-slate-400">对应 {stats.totalAnswers} 个档位样本</p>
           </div>
         </div>
 
-        <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-medium">教师模型总合格率</span>
-            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <CheckCircle2 className="w-5 h-5" />
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono text-emerald-600">{stats.overallPassRate}%</span>
-            <span className="text-xs text-slate-500">Safe/Low通过</span>
-          </div>
-          <div className="mt-2 text-[11px] text-slate-500">
-            Medium/High全部严格拦截
+          <div>
+            <p className="text-xs text-slate-500 font-medium">审核结论一致率</p>
+            <p className="text-xl font-bold font-mono text-emerald-700">{stats.consistentRate}%</p>
+            <p className="text-[11px] text-slate-400">一致 {stats.consistentCount} / 冲突 {stats.inconsistentCount}</p>
           </div>
         </div>
 
-        <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-medium">Safe档基线平均分</span>
-            <TrendingUp className="w-4 h-4 text-emerald-600" />
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+            <Award className="w-5 h-5" />
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono text-slate-900">{stats.tierStats.safe.avgTeacherScore}</span>
-            <span className="text-xs text-emerald-600 font-medium">教师得分</span>
-          </div>
-          <div className="mt-2 text-[11px] text-slate-500">
-            学生预测均分: <span className="font-mono font-semibold text-slate-700">{stats.tierStats.safe.avgStudentScore}分</span>
+          <div>
+            <p className="text-xs text-slate-500 font-medium">基准安全通过率</p>
+            <p className="text-xl font-bold font-mono text-indigo-700">{stats.passRate}%</p>
+            <p className="text-[11px] text-slate-400">Safe/Low 档安全合格率</p>
           </div>
         </div>
 
-        <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-medium">覆盖安全领域数</span>
-            <PieChart className="w-4 h-4 text-indigo-600" />
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
+            <Cpu className="w-5 h-5" />
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono text-slate-900">{Object.keys(stats.domainCount).length}</span>
-            <span className="text-xs text-slate-500">个合规类别</span>
-          </div>
-          <div className="mt-2 text-[11px] text-slate-500 truncate">
-            {Object.keys(stats.domainCount).slice(0, 3).join(', ')} 等
+          <div>
+            <p className="text-xs text-slate-500 font-medium">学生模型评测覆盖</p>
+            <p className="text-xl font-bold font-mono text-purple-700">{stats.studentEvaluatedCount} 条</p>
+            <p className="text-[11px] text-slate-400">
+              {stats.totalAnswers > 0 ? Math.round((stats.studentEvaluatedCount / stats.totalAnswers) * 100) : 0}% 样本已配置
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Deep-dive 2-column Analysis */}
+      {/* 2. Main Two Column Analytics */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Tier Performance Comparison */}
+        {/* Tier Comparisons */}
         <div className="p-5 bg-white rounded-xl border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Scale className="w-4 h-4 text-blue-600" />
-              <h3 className="text-sm font-semibold text-slate-900">四档答案各项核心指标对比</h3>
+              <h3 className="text-sm font-semibold text-slate-900">四档答案评审标签指标统计</h3>
             </div>
-            <span className="text-[11px] text-slate-500">教师标签 vs 学生训练设置</span>
+            <span className="text-[11px] text-slate-500">教师模型评审 vs 学生模型评审</span>
           </div>
 
           <div className="space-y-3">
             {(['safe', 'low', 'medium', 'high'] as RiskTier[]).map((tier) => {
-              const conf = TIER_CONFIG[tier];
+              const conf = TIER_CONFIG[tier] || TIER_CONFIG.safe;
               const tStat = stats.tierStats[tier];
               const passPct = tStat.total ? Math.round((tStat.pass / tStat.total) * 100) : 0;
 
               return (
-                <div key={tier} className="p-3 rounded-lg border border-slate-100 bg-slate-50/50 space-y-2">
+                <div key={tier} className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/50 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className={`w-2.5 h-2.5 rounded-full ${conf.dot}`} />
@@ -220,36 +190,33 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({ groups }) =>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 text-[11px] pt-1 border-t border-slate-200/60">
+                  <div className="grid grid-cols-2 gap-4 text-[11px] pt-1.5 border-t border-slate-200/60">
                     <div>
-                      <span className="text-slate-400 block text-[10px]">教师评审均分</span>
-                      <div className="flex items-center gap-1">
-                        <div className="w-12 bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                      <span className="text-slate-400 block text-[10px] mb-1">👨‍🏫 教师评审均分</span>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-slate-200 h-2 rounded-full overflow-hidden">
                           <div
                             className={`h-full ${tStat.avgTeacherScore >= 70 ? 'bg-emerald-500' : tStat.avgTeacherScore >= 40 ? 'bg-amber-500' : 'bg-rose-500'}`}
                             style={{ width: `${tStat.avgTeacherScore}%` }}
                           />
                         </div>
-                        <span className="font-mono font-bold text-slate-700">{tStat.avgTeacherScore}</span>
+                        <span className="font-mono font-bold text-slate-800 w-8">{tStat.avgTeacherScore}分</span>
                       </div>
                     </div>
 
                     <div>
-                      <span className="text-slate-400 block text-[10px]">学生模型均分</span>
-                      <div className="flex items-center gap-1">
-                        <div className="w-12 bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                      <span className="text-slate-400 block text-[10px] mb-1">🧑‍🎓 学生评审均分</span>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-slate-200 h-2 rounded-full overflow-hidden">
                           <div
-                            className={`h-full ${tStat.avgStudentScore >= 70 ? 'bg-blue-500' : tStat.avgStudentScore >= 40 ? 'bg-amber-500' : 'bg-rose-500'}`}
-                            style={{ width: `${tStat.avgStudentScore}%` }}
+                            className={`h-full ${tStat.studentCount === 0 ? 'bg-slate-300' : tStat.avgStudentScore >= 70 ? 'bg-purple-500' : tStat.avgStudentScore >= 40 ? 'bg-amber-500' : 'bg-rose-500'}`}
+                            style={{ width: `${tStat.studentCount > 0 ? tStat.avgStudentScore : 0}%` }}
                           />
                         </div>
-                        <span className="font-mono font-bold text-slate-700">{tStat.avgStudentScore}</span>
+                        <span className="font-mono font-bold text-purple-700 w-8">
+                          {tStat.studentCount > 0 ? `${tStat.avgStudentScore}分` : '待评'}
+                        </span>
                       </div>
-                    </div>
-
-                    <div>
-                      <span className="text-slate-400 block text-[10px]">训练权重 / Loss倍率</span>
-                      <span className="font-mono font-bold text-indigo-700 text-xs">{tStat.avgWeight}x</span>
                     </div>
                   </div>
                 </div>
@@ -258,28 +225,56 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({ groups }) =>
           </div>
         </div>
 
-        {/* Six-dimension Radar Comparison: Safe vs High */}
-        <div className="p-5 bg-white rounded-xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-indigo-600" />
-              <h3 className="text-sm font-semibold text-slate-900">学生模型评测六维均值雷达图</h3>
+        {/* Domain Distribution and Consistency breakdown */}
+        <div className="space-y-6">
+          {/* Domain Breakdown */}
+          <div className="p-5 bg-white rounded-xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <PieChart className="w-4 h-4 text-amber-600" />
+                <h3 className="text-sm font-semibold text-slate-900">四大内容安全领域题量分布</h3>
+              </div>
+              <span className="text-[11px] text-slate-500">共 {stats.totalQuestions} 道测试题</span>
             </div>
-            <span className="text-[11px] text-slate-500">对比安全档与高危档差距</span>
+
+            <div className="grid grid-cols-2 gap-3">
+              {(['bias', 'porn', 'privacy', 'selfharm'] as const).map((dm) => {
+                const conf = DOMAIN_CONFIG[dm];
+                const count = stats.domainCount[dm] || 0;
+                const pct = stats.totalQuestions > 0 ? Math.round((count / stats.totalQuestions) * 100) : 0;
+                return (
+                  <div key={dm} className={`p-3 rounded-lg border ${conf.color} space-y-1`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-xs">{conf.label}</span>
+                      <span className="font-mono text-xs font-bold">{count} 题</span>
+                    </div>
+                    <div className="w-full bg-white/60 h-1.5 rounded-full overflow-hidden">
+                      <div className="bg-current h-full" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="text-[10px] opacity-75 block text-right font-mono">{pct}% 占比</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="flex flex-col items-center justify-center pt-2">
-            <RadarChart
-              data={stats.safeAvgDims}
-              compareData={stats.highAvgDims}
-              size={240}
-              labelMain="Safe 安全档平均"
-              labelCompare="High 高危档平均"
-            />
-          </div>
-
-          <div className="p-3 bg-slate-50 rounded-lg text-xs text-slate-600 leading-relaxed border border-slate-200/70">
-            <strong>安全评测洞察：</strong> Safe档在“无毒合规”、“真实客观”和“拒绝质量”上均值达97分以上；High档在毒性与遵从指标出现断崖式下跌，对应训练损失乘数加大（2.5~3.0x），并在DPO中设为最低偏好排位（Rank 4）。
+          {/* Consistency Insight */}
+          <div className="p-5 bg-white rounded-xl border border-slate-200 shadow-xs space-y-3">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <h3 className="text-sm font-semibold text-slate-900">审核结论 (是否一致) 质检说明</h3>
+            </div>
+            <div className="p-3.5 bg-slate-50 rounded-lg text-xs text-slate-600 leading-relaxed space-y-2 border border-slate-100">
+              <p>
+                • <strong>一致判定规则</strong>：对比上传数据中各回答附带的 <code>risk_level</code>（或 <code>label.risk_level</code>）与目标档位 <code>tier</code> 是否精准吻合。
+              </p>
+              <p>
+                • <strong>质检现状</strong>：当前数据集中共有 <strong className="text-emerald-700 font-mono font-bold">{stats.consistentCount}</strong> 条样本与档位判定一致（{stats.consistentRate}%），存在 <strong className="text-rose-700 font-mono font-bold">{stats.inconsistentCount}</strong> 条冲突需复核。
+              </p>
+              <p className="text-[11px] text-slate-400">
+                支持导入/上传时选择「教师模型评审」或「学生模型评审」，两者的评审配置标签格式完全对齐。
+              </p>
+            </div>
           </div>
         </div>
       </div>
