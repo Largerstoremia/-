@@ -23,7 +23,14 @@ async function readFile() {
   if (!res.ok) throw new Error(`github read ${res.status}: ${await res.text()}`);
   const j = await res.json();
   const text = Buffer.from(j.content, 'base64').toString('utf8');
-  return { exists: true, sha: j.sha as string, groups: JSON.parse(text) };
+  let groups: unknown = null;
+  try {
+    groups = JSON.parse(text);
+  } catch {
+    // 文件内容非 JSON(半成品/测试):按"无有效数据"处理,允许下次写覆盖
+    return { exists: false, sha: null, groups: null } as const;
+  }
+  return { exists: true, sha: j.sha as string, groups };
 }
 
 async function writeFile(content: string, sha: string | null) {
