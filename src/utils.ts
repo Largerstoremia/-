@@ -78,7 +78,9 @@ export function evaluateConsistency(record: TierAnswerRecord): ConsistencyResult
   const normFileRisk = normalizeRiskLevel(rawFileRisk);
   const normTier = normalizeRiskLevel(record.tier);
 
-  const isConsistent = Boolean(normFileRisk && normTier && normFileRisk === normTier);
+  const isConsistent = Boolean(
+    normFileRisk && normTier && (normFileRisk === normTier || safeOrLow(normFileRisk) === safeOrLow(normTier))
+  );
 
   return {
     isConsistent,
@@ -92,6 +94,14 @@ export function evaluateConsistency(record: TierAnswerRecord): ConsistencyResult
       ? `文件标注 (${rawFileRisk || normTier}) 与档位 (${record.tier}) 判定一致`
       : `文件标注 (${rawFileRisk || '未提供'}) 与档位 (${record.tier}) 存在冲突`,
   };
+}
+
+/**
+ * 将 safe / low 归并为同一低风险类 (返回 'low'，供两者互相视为一致)
+ * medium / high 各自保留原档
+ */
+function safeOrLow(risk: string): string {
+  return risk === 'safe' || risk === 'low' ? 'low' : risk;
 }
 
 /**
