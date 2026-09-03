@@ -18,11 +18,24 @@ function ghHeaders() {
 }
 
 async function readFile() {
-  const res = await fetch(GH, { headers: ghHeaders() });
-  if (res.status === 404) return { exists: false, sha: null, groups: null } as const;
-  if (!res.ok) throw new Error(`github read ${res.status}: ${await res.text()}`);
-  const j = await res.json();
-  const text = Buffer.from(j.content, 'base64').toString('utf8');
+  // 小文件(≤1MB)Contents API 直接返回 base64;大文件该响应无 content 字段,
+  // 须改走 git blobs API(sha → blob.base64)获取完整内容。
+  const metaRes = await fetch(GH, { headers: ghHeaders() });
+  if (metaRes.status === 404) return { exists: false, sha: null, groups: null } as const;
+  if (!metaRes.ok) throw new Error(`github read ${metaRes.status}: ${await metaRes.text()}`);
+  const meta = await metaRes.json();
+  let contentB64 = meta.content as string | undefined;
+
+  if (!contentB64) {
+    const blobRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/git/blobs/${meta.sha}`, {
+      headers: ghHeaders(),
+    });
+    if (!blobRes.ok) throw new Error(`github blob ${blobRes.status}: ${await blobRes.text()}`);
+    const blob = await blobRes.json();
+    contentB64 = blob.content as string;
+  }
+
+  const text = Buffer.from(contentB64, 'base64').toString('utf8');
   let groups: unknown = null;
   try {
     groups = JSON.parse(text);
@@ -30,7 +43,7 @@ async function readFile() {
     // 文件内容非 JSON(半成品/测试):按"无有效数据"处理,允许下次写覆盖
     return { exists: false, sha: null, groups: null } as const;
   }
-  return { exists: true, sha: j.sha as string, groups };
+  return { exists: true, sha: meta.sha as string, groups };
 }
 
 async function writeFile(content: string, sha: string | null) {
