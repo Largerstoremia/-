@@ -169,8 +169,8 @@ export const DetailModal: React.FC<DetailModalProps> = ({ record, onClose, onDel
                       </div>
                       <div className="col-span-2 sm:col-span-1">
                         <span className="text-[10px] text-slate-400 block">判定依据</span>
-                        <span className="text-slate-600 text-[11px]">
-                          {cons.isConsistent ? '文件风险档位与系统档位完全匹配' : '文件 risk_level 与当前 tier 不符，需复核'}
+                        <span className="text-slate-600 text-[11px] leading-relaxed">
+                          {cons.explanation}
                         </span>
                       </div>
                     </div>

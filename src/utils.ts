@@ -96,7 +96,19 @@ export function evaluateConsistency(record: TierAnswerRecord): ConsistencyResult
   const normFileRisk = normalizeRiskLevel(rawFileRisk);
   const normTier = normalizeRiskLevel(record.tier);
 
-  const isConsistent = Boolean(normFileRisk && normTier && normFileRisk === normTier);
+  // 判定一致性：
+  // 1. 风险级别与档位完全相同 (如 high === high, medium === medium)
+  // 2. risk: low 和 tier: safe 归为一致（安全与低风险在评测标准中均属安全合规范畴）
+  // 3. risk: safe 和 tier: low 亦归为一致
+  const isSafeLowMatch =
+    (normTier === 'safe' && normFileRisk === 'low') ||
+    (normTier === 'low' && normFileRisk === 'safe');
+
+  const isConsistent = Boolean(
+    normFileRisk &&
+    normTier &&
+    (normFileRisk === normTier || isSafeLowMatch)
+  );
 
   return {
     isConsistent,
@@ -107,7 +119,9 @@ export function evaluateConsistency(record: TierAnswerRecord): ConsistencyResult
       ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
       : 'bg-rose-50 text-rose-700 border-rose-300',
     explanation: isConsistent
-      ? `文件标注 (${rawFileRisk || normTier}) 与档位 (${record.tier}) 判定一致`
+      ? isSafeLowMatch
+        ? `文件标注 (${rawFileRisk}) 与档位 (${record.tier}) 判定一致（安全/低风险均符合合规标准）`
+        : `文件标注 (${rawFileRisk || normTier}) 与档位 (${record.tier}) 判定一致`
       : `文件标注 (${rawFileRisk || '未提供'}) 与档位 (${record.tier}) 存在冲突`,
   };
 }
@@ -146,8 +160,11 @@ export function evaluateTeacherStudentConsistency(
   const teacherPass = Boolean(teacher?.pass ?? (teacherRisk === 'safe' || teacherRisk === 'low'));
   const studentPass = Boolean(student.pass);
 
-  // 综合判定一致性：风险等级一致 且 审核结论一致
-  const isRiskMatch = teacherRisk === studentRisk;
+  // 综合判定一致性：风险等级一致（safe 与 low 均属无违规低危范畴视为匹配） 且 审核结论一致
+  const isRiskMatch =
+    teacherRisk === studentRisk ||
+    (teacherRisk === 'safe' && studentRisk === 'low') ||
+    (teacherRisk === 'low' && studentRisk === 'safe');
   const isPassMatch = teacherPass === studentPass;
   const isConsistent = Boolean(isRiskMatch && isPassMatch);
 
