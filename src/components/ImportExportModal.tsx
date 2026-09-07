@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { SafetyQuestionGroup, TierAnswerRecord, RiskTier, ExportFilterOptions } from '../types';
-import { parseUploadedJson, evaluateConsistency, SAMPLE_USER_JSONL, exportRecordsToJsonl } from '../utils';
+import { SafetyQuestionGroup, TierAnswerRecord, RiskTier, ExportFilterOptions, UploadRoleTarget } from '../types';
+import { parseUploadedJson, evaluateConsistency, evaluateTeacherStudentConsistency, SAMPLE_USER_JSONL, exportRecordsToJsonl } from '../utils';
 import { TIER_CONFIG } from '../mockData';
 import {
   Download,
@@ -29,6 +29,7 @@ export interface ExportFilterPreset {
   selectedIds?: string[];
   initialTiers?: RiskTier[];
   initialConsistency?: 'all' | 'consistent' | 'inconsistent';
+  initialTeacherStudentConsistency?: 'all' | 'consistent' | 'inconsistent';
   initialDomain?: string;
 }
 
@@ -36,7 +37,11 @@ interface ImportExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   groups: SafetyQuestionGroup[];
-  onImportGroups: (newGroups: SafetyQuestionGroup[], mode: 'merge' | 'replace') => void;
+  onImportGroups: (
+    newGroups: SafetyQuestionGroup[],
+    mode: 'merge' | 'replace',
+    role?: UploadRoleTarget
+  ) => void;
   onResetBenchmark: () => void;
   initialTab?: 'export' | 'import';
   initialExportPreset?: ExportFilterPreset;
@@ -59,6 +64,7 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
   // Export condition filter states
   const [exportFilters, setExportFilters] = useState<ExportFilterOptions>({
     consistencyStatus: 'all',
+    teacherStudentConsistency: 'all',
     selectedTiers: ['safe', 'low', 'medium', 'high'],
     domain: 'all',
     passStatus: 'all',
@@ -75,6 +81,7 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
       }
       setExportFilters({
         consistencyStatus: initialExportPreset?.initialConsistency || 'all',
+        teacherStudentConsistency: initialExportPreset?.initialTeacherStudentConsistency || 'all',
         selectedTiers:
           initialExportPreset?.initialTiers && initialExportPreset.initialTiers.length > 0
             ? initialExportPreset.initialTiers
@@ -129,13 +136,24 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
       if (!initialExportPreset.selectedIds.includes(rec.id)) return false;
     }
 
-    // 2. Consistency filter
+    // 2. Consistency filter (基准一致性: tier vs 文件标注)
     if (exportFilters.consistencyStatus !== 'all') {
       const consistency = evaluateConsistency(rec);
       if (exportFilters.consistencyStatus === 'consistent' && !consistency.isConsistent) {
         return false;
       }
       if (exportFilters.consistencyStatus === 'inconsistent' && consistency.isConsistent) {
+        return false;
+      }
+    }
+
+    // 2.2 Teacher vs Student consistency filter (师生模型评测一致性)
+    if (exportFilters.teacherStudentConsistency && exportFilters.teacherStudentConsistency !== 'all') {
+      const tsConsistency = evaluateTeacherStudentConsistency(rec);
+      if (exportFilters.teacherStudentConsistency === 'consistent' && (!tsConsistency.hasStudent || !tsConsistency.isConsistent)) {
+        return false;
+      }
+      if (exportFilters.teacherStudentConsistency === 'inconsistent' && (!tsConsistency.hasStudent || tsConsistency.isConsistent)) {
         return false;
       }
     }
@@ -448,7 +466,7 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
       setImportStatus({ type: 'error', message: res.message });
       return;
     }
-    onImportGroups(res.groups, importMode);
+    onImportGroups(res.groups, importMode, targetRole);
     onClose();
   };
 
@@ -810,7 +828,7 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
                   {/* Condition 1: 审核结论一致性 */}
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-bold text-slate-700 block">
-                      1. 审核结论一致性 (Consistency)：
+                      1. 基准审核一致性 (Tier 与文件标注)：
                     </label>
                     <div className="inline-flex rounded-lg bg-white p-1 border border-slate-200 w-full shadow-2xs">
                       <button
@@ -822,7 +840,7 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        全部结论
+                        全部
                       </button>
                       <button
                         type="button"
@@ -833,7 +851,7 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
                             : 'text-slate-600 hover:text-emerald-700'
                         }`}
                       >
-                        仅结论一致
+                        仅一致
                       </button>
                       <button
                         type="button"
@@ -844,7 +862,49 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
                             : 'text-slate-600 hover:text-rose-700'
                         }`}
                       >
-                        仅结论不一致
+                        仅不一致
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Condition 1.5: 师生模型评测一致性 (教师 vs 学生) */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-slate-700 block">
+                      2. 师生模型对比 (教师 vs 学生)：
+                    </label>
+                    <div className="inline-flex rounded-lg bg-white p-1 border border-slate-200 w-full shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => setExportFilters((p) => ({ ...p, teacherStudentConsistency: 'all' }))}
+                        className={`flex-1 py-1 text-center font-medium rounded-md transition-all cursor-pointer ${
+                          exportFilters.teacherStudentConsistency === 'all'
+                            ? 'bg-purple-600 text-white shadow-2xs font-semibold'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        不限
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setExportFilters((p) => ({ ...p, teacherStudentConsistency: 'consistent' }))}
+                        className={`flex-1 py-1 text-center font-medium rounded-md transition-all cursor-pointer ${
+                          exportFilters.teacherStudentConsistency === 'consistent'
+                            ? 'bg-purple-600 text-white shadow-2xs font-semibold'
+                            : 'text-slate-600 hover:text-purple-700'
+                        }`}
+                      >
+                        仅师生一致
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setExportFilters((p) => ({ ...p, teacherStudentConsistency: 'inconsistent' }))}
+                        className={`flex-1 py-1 text-center font-medium rounded-md transition-all cursor-pointer ${
+                          exportFilters.teacherStudentConsistency === 'inconsistent'
+                            ? 'bg-rose-600 text-white shadow-2xs font-semibold'
+                            : 'text-slate-600 hover:text-rose-700'
+                        }`}
+                      >
+                        仅师生分歧
                       </button>
                     </div>
                   </div>

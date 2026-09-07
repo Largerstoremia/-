@@ -72,15 +72,31 @@ export interface ConsistencyResult {
   explanation: string;
 }
 
+// 师生模型对比一致性结果
+export interface TeacherStudentConsistencyResult {
+  hasStudent: boolean;
+  hasTeacher: boolean;
+  isConsistent: boolean;
+  status: 'consistent' | 'inconsistent' | 'no_student';
+  statusText: '师生一致' | '师生分歧' | '待上传学生';
+  badgeClass: string;
+  teacherRisk: string;
+  studentRisk: string;
+  teacherPass: boolean;
+  studentPass: boolean;
+  teacherScore: number;
+  studentScore: number;
+  scoreDiff: number;
+  explanation: string;
+}
+
 export function evaluateConsistency(record: TierAnswerRecord): ConsistencyResult {
   // 从上传条目中提取 risk_level (可能在根属性 risk_level 或 label.risk_level)
   const rawFileRisk = (record as any).risk_level ?? record.label?.risk_level ?? '';
   const normFileRisk = normalizeRiskLevel(rawFileRisk);
   const normTier = normalizeRiskLevel(record.tier);
 
-  const isConsistent = Boolean(
-    normFileRisk && normTier && (normFileRisk === normTier || safeOrLow(normFileRisk) === safeOrLow(normTier))
-  );
+  const isConsistent = Boolean(normFileRisk && normTier && normFileRisk === normTier);
 
   return {
     isConsistent,
@@ -97,11 +113,68 @@ export function evaluateConsistency(record: TierAnswerRecord): ConsistencyResult
 }
 
 /**
- * 将 safe / low 归并为同一低风险类 (返回 'low'，供两者互相视为一致)
- * medium / high 各自保留原档
+ * 对比上传的教师模型结果和学生模型结果是否一致
+ * 综合判定：风险等级 (risk_level) 与审核结论 (pass/fail)
  */
-function safeOrLow(risk: string): string {
-  return risk === 'safe' || risk === 'low' ? 'low' : risk;
+export function evaluateTeacherStudentConsistency(
+  record: TierAnswerRecord
+): TeacherStudentConsistencyResult {
+  const teacher = record.teacher_label || record.label;
+  const student = record.student_label;
+
+  if (!student) {
+    return {
+      hasStudent: false,
+      hasTeacher: Boolean(teacher),
+      isConsistent: false,
+      status: 'no_student',
+      statusText: '待上传学生',
+      badgeClass: 'bg-slate-50 text-slate-500 border-slate-200',
+      teacherRisk: teacher?.risk_level ? String(teacher.risk_level) : record.tier,
+      studentRisk: '未评测',
+      teacherPass: teacher?.pass ?? (record.tier === 'safe'),
+      studentPass: false,
+      teacherScore: teacher?.score ?? 0,
+      studentScore: 0,
+      scoreDiff: 0,
+      explanation: '尚未上传学生模型自评结果',
+    };
+  }
+
+  const teacherRisk = normalizeRiskLevel(teacher?.risk_level || record.tier);
+  const studentRisk = normalizeRiskLevel(student.risk_level);
+  const teacherPass = Boolean(teacher?.pass ?? (teacherRisk === 'safe' || teacherRisk === 'low'));
+  const studentPass = Boolean(student.pass);
+
+  // 综合判定一致性：风险等级一致 且 审核结论一致
+  const isRiskMatch = teacherRisk === studentRisk;
+  const isPassMatch = teacherPass === studentPass;
+  const isConsistent = Boolean(isRiskMatch && isPassMatch);
+
+  const teacherScore = typeof teacher?.score === 'number' ? teacher.score : 0;
+  const studentScore = typeof student.score === 'number' ? student.score : 0;
+  const scoreDiff = Math.abs(teacherScore - studentScore);
+
+  return {
+    hasStudent: true,
+    hasTeacher: Boolean(teacher),
+    isConsistent,
+    status: isConsistent ? 'consistent' : 'inconsistent',
+    statusText: isConsistent ? '师生一致' : '师生分歧',
+    badgeClass: isConsistent
+      ? 'bg-purple-50 text-purple-700 border-purple-300'
+      : 'bg-rose-50 text-rose-700 border-rose-300',
+    teacherRisk: teacher?.risk_level ? String(teacher.risk_level) : record.tier,
+    studentRisk: student.risk_level ? String(student.risk_level) : '未指定',
+    teacherPass,
+    studentPass,
+    teacherScore,
+    studentScore,
+    scoreDiff,
+    explanation: isConsistent
+      ? `教师(${teacherRisk})与学生(${studentRisk})判定一致，分差 ${scoreDiff}分`
+      : `教师(${teacherRisk}/${teacherPass ? 'PASS' : 'FAIL'}) vs 学生(${studentRisk}/${studentPass ? 'PASS' : 'FAIL'})，判定存在分歧`,
+  };
 }
 
 /**
@@ -313,7 +386,24 @@ export function parseUploadedJson(
         if (item.answers && item.answers[tier]) {
           const a = item.answers[tier];
           const fileRisk = a.risk_level ?? a.label?.risk_level ?? tier;
-          const labelObj = normalizeEvalLabel(a.label, tier, '教师评审模型');
+          const labelObj = normalizeEvalLabel(
+            a.label,
+            tier,
+            targetRole === 'teacher' ? '教师评审模型' : '学生自测模型'
+          );
+
+          // 核心隔离：学生角色上传绝不污染/填充教师标签，反之亦然
+          let teacherLabel: ModelEvaluationLabel | undefined;
+          let studentLabel: ModelEvaluationLabel | undefined;
+
+          if (targetRole === 'teacher') {
+            teacherLabel = labelObj;
+            studentLabel = a.student_label;
+          } else {
+            // targetRole === 'student'
+            studentLabel = labelObj;
+            teacherLabel = a.teacher_label || (a.label && a.label.judge_name !== '学生自测模型' && !a.label.judge_name?.includes('学生') ? a.label : undefined);
+          }
 
           const record: TierAnswerRecord = {
             id: a.id || `${qid}-${tier}`,
@@ -324,9 +414,9 @@ export function parseUploadedJson(
             answer_type: a.answer_type || tier,
             tier,
             risk_level: String(fileRisk),
-            label: labelObj,
-            teacher_label: targetRole === 'teacher' ? labelObj : (a.teacher_label || labelObj),
-            student_label: targetRole === 'student' ? labelObj : a.student_label,
+            label: teacherLabel || (targetRole === 'teacher' ? labelObj : (a.label || labelObj)),
+            teacher_label: teacherLabel,
+            student_label: studentLabel,
             _rewritten: Boolean(a._rewritten),
           };
           answers[tier] = record;
@@ -396,6 +486,19 @@ export function parseUploadedJson(
     const existingRec = groupMap[qid].answers[tier];
     const recId = item.id || `${qid}-${tier}`;
 
+    // 核心隔离：严格分离教师与学生评审标签
+    let teacherLabel: ModelEvaluationLabel | undefined;
+    let studentLabel: ModelEvaluationLabel | undefined;
+
+    if (targetRole === 'teacher') {
+      teacherLabel = evalLabel;
+      studentLabel = existingRec?.student_label || (item.student_label ? normalizeEvalLabel(item.student_label, tier, '学生自测模型') : undefined);
+    } else {
+      // targetRole === 'student'
+      studentLabel = evalLabel;
+      teacherLabel = existingRec?.teacher_label || (item.teacher_label ? normalizeEvalLabel(item.teacher_label, tier, '偏见公平陪审员') : undefined);
+    }
+
     const newRecord: TierAnswerRecord = {
       id: recId,
       qid,
@@ -405,9 +508,10 @@ export function parseUploadedJson(
       answer_type: item.answer_type || (tier === 'safe' ? 'safe' : 'unsafe'),
       tier,
       risk_level: String(fileRisk),
-      label: targetRole === 'teacher' ? evalLabel : (existingRec?.label || evalLabel),
-      teacher_label: targetRole === 'teacher' ? evalLabel : (existingRec?.teacher_label || existingRec?.label),
-      student_label: targetRole === 'student' ? evalLabel : existingRec?.student_label,
+      // 保证主基准标签优先使用教师模型结果
+      label: teacherLabel || existingRec?.label || evalLabel,
+      teacher_label: teacherLabel,
+      student_label: studentLabel,
       _rewritten: item._rewritten ?? existingRec?._rewritten ?? false,
     };
 

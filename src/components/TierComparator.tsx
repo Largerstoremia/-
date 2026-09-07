@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { SafetyQuestionGroup, RiskTier, TierAnswerRecord } from '../types';
 import { TIER_CONFIG } from '../mockData';
 import { ConfirmModal } from './ConfirmModal';
+import { evaluateTeacherStudentConsistency } from '../utils';
 import {
   CheckCircle2,
   XCircle,
@@ -12,7 +13,8 @@ import {
   Layers,
   Sparkles,
   Trash2,
-  HelpCircle
+  HelpCircle,
+  ArrowLeftRight,
 } from 'lucide-react';
 
 interface TierComparatorProps {
@@ -319,10 +321,32 @@ export const TierComparator: React.FC<TierComparatorProps> = ({
                   <span>模型标识: <strong className="font-normal text-slate-700">{studentLabel.judge_name}</strong></span>
                   <span>置信度: <strong className="font-mono text-slate-700">{Math.round(studentLabel.confidence * 100)}%</strong></span>
                 </div>
+
+                {/* Teacher vs Student Consistency summary box */}
+                {(() => {
+                  const ts = evaluateTeacherStudentConsistency(item);
+                  return (
+                    <div
+                      className={`mt-2 p-2.5 rounded-lg border text-xs flex items-center justify-between gap-2 ${
+                        ts.isConsistent
+                          ? 'bg-purple-50/80 border-purple-200 text-purple-900'
+                          : 'bg-rose-50 border-rose-200 text-rose-900'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-semibold">
+                        <ArrowLeftRight className="w-3.5 h-3.5 shrink-0" />
+                        <span>师生对比: {ts.statusText}</span>
+                      </div>
+                      <div className="text-[11px] font-mono text-right opacity-90">
+                        分差: {ts.scoreDiff > 0 ? `+${ts.scoreDiff.toFixed(1)}` : ts.scoreDiff.toFixed(1)}分
+                      </div>
+                    </div>
+                  );
+                })()}
               </>
             ) : (
               <div className="bg-white p-3 rounded-lg border border-slate-200/60 text-center text-xs text-slate-400">
-                暂未配置学生模型评测标签（格式与教师模型标签配置完全相同，支持后续导入对比）
+                暂未配置学生模型评测标签（支持在上级数据中心上传学生数据自动比对）
               </div>
             )}
           </div>

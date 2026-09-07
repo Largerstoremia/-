@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { SafetyQuestionGroup, RiskTier, TierAnswerRecord } from './types';
+import React, { useState, useEffect } from 'react';
+import { SafetyQuestionGroup, RiskTier, TierAnswerRecord, UploadRoleTarget } from './types';
 import { INITIAL_SAFETY_GROUPS } from './mockData';
-import { fetchRemote, putRemote } from './api';
 import { TierComparator } from './components/TierComparator';
 import { DataTable } from './components/DataTable';
 import { DatasetAnalytics } from './components/DatasetAnalytics';
@@ -23,13 +22,15 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Trash2,
-  Info
+  Info,
+  Cloud,
+  RefreshCw,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'CS_STUDIO_DATA_GROUPS_V1';
 
 export default function App() {
-  // Save & sync state
+  // Load data from localStorage or fallback to benchmark data
   const [groups, setGroups] = useState<SafetyQuestionGroup[]>(() => {
     try {
       const cached = localStorage.getItem(STORAGE_KEY);
@@ -77,6 +78,11 @@ export default function App() {
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
+  // Cloud & cross-device synchronization state
+  const isInitialLoad = React.useRef(true);
+  const [syncState, setSyncState] = useState<'synced' | 'syncing' | 'offline'>('syncing');
+  const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
+
   // General toast notification
   const [toastMessage, setToastMessage] = useState<{
     text: string;
@@ -85,17 +91,6 @@ export default function App() {
 
   const [isConfirmResetOpen, setIsConfirmResetOpen] = useState(false);
 
-  // 当前 groups 的 ref(供防抖写与首次迁移读取最新值)
-  const groupsRef = useRef(groups);
-  useEffect(() => {
-    groupsRef.current = groups;
-  }, [groups]);
-
-  // 云端同步:远端文件 sha / 初始化是否完成 / 是否需跳过下一次远端写(远端拉取覆盖本地时)
-  const shaRef = useRef<string | null>(null);
-  const initLoadedRef = useRef(false);
-  const skipNextRemoteWriteRef = useRef(false);
-
   const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
     setToastMessage({ text, type });
     setTimeout(() => {
@@ -103,62 +98,107 @@ export default function App() {
     }, 3500);
   };
 
-  // 挂载后从云端拉取最新数据集:远端有数据则以云端为准覆盖本地;
-  // 远端无文件时,若本地存在真实数据(非初始示例)则自动迁移上传,避免示例污染云端。
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const remote = await fetchRemote();
-      if (cancelled) return;
-      if (remote && remote.groups !== null) {
-        skipNextRemoteWriteRef.current = true;
-        shaRef.current = remote.sha;
-        setGroups(remote.groups);
-      } else {
-        const isPristine = JSON.stringify(INITIAL_SAFETY_GROUPS) === JSON.stringify(groupsRef.current);
-        if (!isPristine) {
-          const res = await putRemote(groupsRef.current, null);
-          if (res.ok) shaRef.current = res.sha ?? null;
+  // Fetch data from server API on mount for cross-device persistence
+  const fetchServerGroups = async (manual = false) => {
+    try {
+      setSyncState('syncing');
+      const res = await fetch('/api/groups');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.groups) && data.groups.length > 0) {
+          setGroups(data.groups);
+          setSyncState('synced');
+          const timeStr = new Date().toLocaleTimeString();
+          setLastSyncedTime(timeStr);
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data.groups));
+          } catch {}
+          if (manual) {
+            showToast(`已从云端同步获取 ${data.groups.length} 道测试题数据`, 'success');
+          }
+          return;
         }
       }
-      initLoadedRef.current = true;
-    })();
-    return () => {
-      cancelled = true;
+    } catch (err) {
+      console.warn('Backend storage API not reachable, using local storage:', err);
+      setSyncState('offline');
+    } finally {
+      setSyncState((prev) => (prev === 'syncing' ? 'synced' : prev));
+    }
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+    const init = async () => {
+      try {
+        setSyncState('syncing');
+        const res = await fetch('/api/groups');
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.success && Array.isArray(data.groups) && data.groups.length > 0) {
+            setGroups(data.groups);
+            setSyncState('synced');
+            setLastSyncedTime(new Date().toLocaleTimeString());
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data.groups));
+            isInitialLoad.current = false;
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('Initial server fetch failed, fallback to local cache:', e);
+      }
+
+      if (isMounted) {
+        // If server had no data, save initial/current local data to server
+        isInitialLoad.current = false;
+        setSyncState('synced');
+        fetch('/api/groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ groups }),
+        }).catch((e) => console.warn('Sync initial groups failed:', e));
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    init();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  // 本地快照:每次 groups 变化立即写 localStorage(无防抖)
+  // Sync to server disk storage & localStorage whenever groups change
   useEffect(() => {
+    if (isInitialLoad.current) {
+      return;
+    }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(groups));
       setSaveToast(true);
       const timer = setTimeout(() => setSaveToast(false), 2000);
-      return () => clearTimeout(timer);
     } catch (e) {
       console.error('Failed to save to localStorage:', e);
     }
-  }, [groups]);
 
-  // 云端防抖写:初始化完成且非“刚被云端覆盖”时,1200ms 后推全量
-  useEffect(() => {
-    if (!initLoadedRef.current || skipNextRemoteWriteRef.current) {
-      if (skipNextRemoteWriteRef.current) {
-        skipNextRemoteWriteRef.current = false;
-      }
-      return;
-    }
+    // Debounced sync to server for cross-device persistence
     const timer = setTimeout(async () => {
-      const res = await putRemote(groupsRef.current, shaRef.current);
-      if (res.ok) {
-        shaRef.current = res.sha ?? shaRef.current;
-      } else {
-        showToast('云端同步失败,已保存在本机', 'error');
+      try {
+        setSyncState('syncing');
+        const res = await fetch('/api/groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ groups }),
+        });
+        if (res.ok) {
+          setSyncState('synced');
+          setLastSyncedTime(new Date().toLocaleTimeString());
+        }
+      } catch (e) {
+        console.warn('Failed to sync to server:', e);
+        setSyncState('offline');
       }
-    }, 1200);
+    }, 500);
+
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups]);
 
   // Current active group for comparator
@@ -276,20 +316,67 @@ export default function App() {
     showToast('已清空当前评测数据池中的所有记录', 'info');
   };
 
-  // Import groups (merge or replace)
-  const handleImportGroups = (newGroups: SafetyQuestionGroup[], mode: 'merge' | 'replace') => {
+  // Import groups (merge or replace with strict role isolation)
+  const handleImportGroups = (
+    newGroups: SafetyQuestionGroup[],
+    mode: 'merge' | 'replace',
+    role?: UploadRoleTarget
+  ) => {
     if (mode === 'replace') {
       setGroups(newGroups);
       if (newGroups.length > 0) setSelectedQid(newGroups[0].qid);
-      showToast(`已覆盖导入 ${newGroups.length} 个测试题`, 'success');
+      const roleText = role === 'student' ? '学生模型评测' : '教师模型评测';
+      showToast(`已覆盖导入 ${newGroups.length} 个测试题（${roleText}数据）`, 'success');
     } else {
       setGroups((prev) => {
         const existingMap = new Map<string, SafetyQuestionGroup>(prev.map((g) => [g.qid, g]));
         newGroups.forEach((g) => {
           if (existingMap.has(g.qid)) {
-            // merge answers
             const prevGroup = existingMap.get(g.qid)!;
-            const mergedAnswers = { ...prevGroup.answers, ...g.answers };
+            const mergedAnswers: Record<RiskTier, TierAnswerRecord> = { ...prevGroup.answers };
+
+            (['safe', 'low', 'medium', 'high'] as RiskTier[]).forEach((t) => {
+              const prevRec = prevGroup.answers[t];
+              const incomingRec = g.answers[t];
+
+              if (prevRec && incomingRec) {
+                if (role === 'student' || (!incomingRec.teacher_label && incomingRec.student_label)) {
+                  // 1. 导入学生模型结果：严格保护教师模型数据不被覆盖或篡改
+                  mergedAnswers[t] = {
+                    ...prevRec,
+                    answer: incomingRec.answer || prevRec.answer,
+                    // 保持教师模型评审完全不变
+                    label: prevRec.teacher_label || prevRec.label,
+                    teacher_label: prevRec.teacher_label || prevRec.label,
+                    // 独立写入学生模型结果
+                    student_label: incomingRec.student_label || incomingRec.label,
+                    _rewritten: incomingRec._rewritten ?? prevRec._rewritten,
+                  };
+                } else if (role === 'teacher' || (incomingRec.teacher_label && !incomingRec.student_label)) {
+                  // 2. 导入教师模型结果：严格保护已有学生模型数据不被清除
+                  mergedAnswers[t] = {
+                    ...incomingRec,
+                    label: incomingRec.teacher_label || incomingRec.label,
+                    teacher_label: incomingRec.teacher_label || incomingRec.label,
+                    // 保留学生模型自评结果
+                    student_label: prevRec.student_label || incomingRec.student_label,
+                    _rewritten: incomingRec._rewritten ?? prevRec._rewritten,
+                  };
+                } else {
+                  // 通用合并
+                  mergedAnswers[t] = {
+                    ...prevRec,
+                    ...incomingRec,
+                    label: incomingRec.teacher_label || prevRec.teacher_label || incomingRec.label || prevRec.label,
+                    teacher_label: incomingRec.teacher_label || prevRec.teacher_label || prevRec.label,
+                    student_label: incomingRec.student_label || prevRec.student_label,
+                  };
+                }
+              } else if (incomingRec) {
+                mergedAnswers[t] = incomingRec;
+              }
+            });
+
             existingMap.set(g.qid, {
               ...prevGroup,
               ...g,
@@ -302,7 +389,8 @@ export default function App() {
         return Array.from(existingMap.values());
       });
       if (newGroups.length > 0) setSelectedQid(newGroups[0].qid);
-      showToast(`已合并导入 ${newGroups.length} 个测试题`, 'success');
+      const roleText = role === 'student' ? '学生自评' : '教师基准';
+      showToast(`已成功合并导入 ${newGroups.length} 个测试题（${roleText}数据相互独立）`, 'success');
     }
   };
 
@@ -310,12 +398,22 @@ export default function App() {
     setIsConfirmResetOpen(true);
   };
 
-  const handleExecuteResetBenchmark = () => {
+  const handleExecuteResetBenchmark = async () => {
     setGroups(INITIAL_SAFETY_GROUPS);
     setSelectedQid(INITIAL_SAFETY_GROUPS[0]?.qid || '');
     setIsImportExportOpen(false);
     setIsConfirmResetOpen(false);
-    showToast('已成功恢复系统初始评测基准数据集', 'success');
+    try {
+      await fetch('/api/reset', { method: 'POST' });
+      await fetch('/api/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groups: INITIAL_SAFETY_GROUPS }),
+      });
+    } catch (e) {
+      console.warn('Server reset failed:', e);
+    }
+    showToast('已成功恢复系统初始评测基准数据集并同步到服务端存储', 'success');
   };
 
   const totalAnswerCount = groups.reduce((acc, g) => {
@@ -365,7 +463,7 @@ export default function App() {
             className="px-3.5 py-2 text-xs font-semibold text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors flex items-center gap-2 cursor-pointer shadow-2xs"
           >
             <Plus className="w-4 h-4" />
-            <span>新增评测题目</span>
+            <span>新增评测题目111</span>
           </button>
         </div>
       </header>
@@ -421,8 +519,28 @@ export default function App() {
           )}
         </div>
 
-        {/* Global info pill */}
+        {/* Global info pill & Cloud Sync status */}
         <div className="flex items-center gap-3 text-xs text-slate-500">
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-100/90 border border-slate-200 text-[11px] text-slate-600 font-mono"
+            title="跨设备持久存储：上传/修改数据已自动持久化存储至后端服务，在其它设备打开本页面自动恢复最新数据"
+          >
+            <Cloud className={`w-3.5 h-3.5 ${syncState === 'syncing' ? 'text-amber-500 animate-pulse' : syncState === 'synced' ? 'text-emerald-600' : 'text-slate-400'}`} />
+            <span>
+              {syncState === 'syncing' ? '云端同步中...' : syncState === 'synced' ? '跨设备存储: 已同步' : '本地存储模式'}
+            </span>
+            {lastSyncedTime && (
+              <span className="text-[10px] text-slate-400">({lastSyncedTime})</span>
+            )}
+            <button
+              onClick={() => fetchServerGroups(true)}
+              className="ml-1 p-0.5 text-slate-400 hover:text-blue-600 rounded transition-colors cursor-pointer"
+              title="从服务端拉取最新数据（如在其它设备有更新）"
+            >
+              <RefreshCw className={`w-3 h-3 ${syncState === 'syncing' ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
           {saveToast && (
             <span className="flex items-center gap-1 text-emerald-600 text-[11px] font-mono animate-fade-in">
               <CheckCircle2 className="w-3 h-3" /> 已实时保存

@@ -57,13 +57,15 @@ export interface FilterState {
   search: string;
   domain: string;
   tier: string;
-  consistencyStatus: string;  // 'all' | 'consistent' | 'inconsistent'
+  consistencyStatus: string;  // 'all' | 'consistent' | 'inconsistent' (基准一致性: tier vs 教师)
+  teacherStudentConsistency: string; // 'all' | 'consistent' | 'inconsistent' | 'has_student' | 'no_student' (师生一致性: 教师 vs 学生)
   hasStudentEval?: string;    // 'all' | 'has_student' | 'no_student'
   minScore: number;
 }
 
 export interface ExportFilterOptions {
   consistencyStatus: 'all' | 'consistent' | 'inconsistent';
+  teacherStudentConsistency?: 'all' | 'consistent' | 'inconsistent';
   selectedTiers: RiskTier[];
   domain: string;
   passStatus: 'all' | 'pass' | 'fail';

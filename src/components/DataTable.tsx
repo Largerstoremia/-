@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { SafetyQuestionGroup, RiskTier, TierAnswerRecord, FilterState } from '../types';
+import { SafetyQuestionGroup, RiskTier, TierAnswerRecord, FilterState, UploadRoleTarget } from '../types';
 import { TIER_CONFIG } from '../mockData';
 import { ConfirmModal } from './ConfirmModal';
 import {
   DOMAIN_CONFIG,
   VALID_DOMAINS,
   evaluateConsistency,
+  evaluateTeacherStudentConsistency,
   parseUploadedJson,
   SAMPLE_USER_JSONL,
 } from '../utils';
@@ -30,7 +31,8 @@ import {
   Info,
   CheckSquare,
   Square,
-  Download
+  Download,
+  ArrowLeftRight,
 } from 'lucide-react';
 
 interface DataTableProps {
@@ -43,11 +45,16 @@ interface DataTableProps {
   onClearAllData?: () => void;
   onResetBenchmark?: () => void;
   onViewRecordDetail: (record: TierAnswerRecord) => void;
-  onImportGroups?: (newGroups: SafetyQuestionGroup[], mode: 'merge' | 'replace') => void;
+  onImportGroups?: (
+    newGroups: SafetyQuestionGroup[],
+    mode: 'merge' | 'replace',
+    role?: UploadRoleTarget
+  ) => void;
   onOpenExport?: (preset?: {
     selectedIds?: string[];
     initialTiers?: RiskTier[];
     initialConsistency?: 'all' | 'consistent' | 'inconsistent';
+    initialTeacherStudentConsistency?: 'all' | 'consistent' | 'inconsistent';
     initialDomain?: string;
   }) => void;
 }
@@ -98,6 +105,7 @@ export const DataTable: React.FC<DataTableProps> = ({
     tier: 'all',
     minScore: 0,
     consistencyStatus: 'all',
+    teacherStudentConsistency: 'all',
   });
 
   const handleCopyJson = (record: TierAnswerRecord) => {
@@ -132,7 +140,7 @@ export const DataTable: React.FC<DataTableProps> = ({
     });
 
     if (onImportGroups) {
-      onImportGroups(res.groups, 'merge');
+      onImportGroups(res.groups, 'merge', targetRole);
     }
 
     const roleName = targetRole === 'teacher' ? '教师模型评审 (Teacher)' : '学生模型评审 (Student)';
@@ -187,7 +195,7 @@ export const DataTable: React.FC<DataTableProps> = ({
     return list;
   }, [groups]);
 
-  // Consistency summary calculations
+  // Consistency summary calculations (Tier vs 教师标注)
   const consistencyStats = useMemo(() => {
     let consistent = 0;
     let inconsistent = 0;
@@ -203,6 +211,26 @@ export const DataTable: React.FC<DataTableProps> = ({
     return { consistent, inconsistent, total, rate };
   }, [allFlatRecords]);
 
+  // Teacher vs Student Consistency summary calculations (教师 vs 学生)
+  const teacherStudentStats = useMemo(() => {
+    let consistent = 0;
+    let inconsistent = 0;
+    let withStudent = 0;
+    allFlatRecords.forEach((rec) => {
+      const ts = evaluateTeacherStudentConsistency(rec);
+      if (ts.hasStudent) {
+        withStudent++;
+        if (ts.isConsistent) {
+          consistent++;
+        } else {
+          inconsistent++;
+        }
+      }
+    });
+    const rate = withStudent > 0 ? Math.round((consistent / withStudent) * 100) : 0;
+    return { consistent, inconsistent, withStudent, rate, total: allFlatRecords.length };
+  }, [allFlatRecords]);
+
   // Filtered flat records
   const filteredFlatRecords = useMemo(() => {
     return allFlatRecords.filter((rec) => {
@@ -212,10 +240,21 @@ export const DataTable: React.FC<DataTableProps> = ({
       // Tier filter
       if (filters.tier !== 'all' && rec.tier !== filters.tier) return false;
 
-      // Consistency filter
+      // Consistency filter (基准一致性: Tier vs 教师)
       const cons = evaluateConsistency(rec);
       if (filters.consistencyStatus === 'consistent' && !cons.isConsistent) return false;
       if (filters.consistencyStatus === 'inconsistent' && cons.isConsistent) return false;
+
+      // Teacher vs Student Consistency filter (教师 vs 学生)
+      if (filters.teacherStudentConsistency && filters.teacherStudentConsistency !== 'all') {
+        const ts = evaluateTeacherStudentConsistency(rec);
+        if (filters.teacherStudentConsistency === 'consistent' && (!ts.hasStudent || !ts.isConsistent)) {
+          return false;
+        }
+        if (filters.teacherStudentConsistency === 'inconsistent' && (!ts.hasStudent || ts.isConsistent)) {
+          return false;
+        }
+      }
 
       // Score filter
       if (rec.label.score < filters.minScore) return false;
@@ -231,7 +270,9 @@ export const DataTable: React.FC<DataTableProps> = ({
           rec.label.analysis.toLowerCase().includes(q) ||
           rec.label.judge_name.toLowerCase().includes(q) ||
           rec.label.error_type.toLowerCase().includes(q) ||
-          String(rec.risk_level || '').toLowerCase().includes(q)
+          String(rec.risk_level || '').toLowerCase().includes(q) ||
+          String(rec.student_label?.analysis || '').toLowerCase().includes(q) ||
+          String(rec.student_label?.judge_name || '').toLowerCase().includes(q)
         );
       }
 
@@ -259,7 +300,9 @@ export const DataTable: React.FC<DataTableProps> = ({
               ans.label.analysis.toLowerCase().includes(q) ||
               ans.label.judge_name.toLowerCase().includes(q) ||
               ans.label.error_type.toLowerCase().includes(q) ||
-              String(ans.risk_level || '').toLowerCase().includes(q))
+              String(ans.risk_level || '').toLowerCase().includes(q) ||
+              String(ans.student_label?.analysis || '').toLowerCase().includes(q) ||
+              String(ans.student_label?.judge_name || '').toLowerCase().includes(q))
           );
         });
 
@@ -273,14 +316,41 @@ export const DataTable: React.FC<DataTableProps> = ({
         if (filters.consistencyStatus === 'consistent' && !cons.isConsistent) return false;
         if (filters.consistencyStatus === 'inconsistent' && cons.isConsistent) return false;
         if (item.label.score < filters.minScore) return false;
-      } else if (filters.consistencyStatus !== 'all') {
-        const answers = Object.values(g.answers) as TierAnswerRecord[];
-        if (filters.consistencyStatus === 'consistent') {
-          const allCons = answers.every((a) => evaluateConsistency(a).isConsistent);
-          if (!allCons) return false;
-        } else if (filters.consistencyStatus === 'inconsistent') {
-          const hasIncons = answers.some((a) => !evaluateConsistency(a).isConsistent);
-          if (!hasIncons) return false;
+        if (filters.teacherStudentConsistency && filters.teacherStudentConsistency !== 'all') {
+          const ts = evaluateTeacherStudentConsistency(item);
+          if (filters.teacherStudentConsistency === 'consistent' && (!ts.hasStudent || !ts.isConsistent)) {
+            return false;
+          }
+          if (filters.teacherStudentConsistency === 'inconsistent' && (!ts.hasStudent || ts.isConsistent)) {
+            return false;
+          }
+        }
+      } else {
+        if (filters.consistencyStatus !== 'all') {
+          const answers = Object.values(g.answers).filter(Boolean) as TierAnswerRecord[];
+          if (filters.consistencyStatus === 'consistent') {
+            const allCons = answers.length > 0 && answers.every((a) => evaluateConsistency(a).isConsistent);
+            if (!allCons) return false;
+          } else if (filters.consistencyStatus === 'inconsistent') {
+            const hasIncons = answers.some((a) => !evaluateConsistency(a).isConsistent);
+            if (!hasIncons) return false;
+          }
+        }
+        if (filters.teacherStudentConsistency && filters.teacherStudentConsistency !== 'all') {
+          const answers = Object.values(g.answers).filter(Boolean) as TierAnswerRecord[];
+          if (filters.teacherStudentConsistency === 'consistent') {
+            const hasCons = answers.some((a) => {
+              const ts = evaluateTeacherStudentConsistency(a);
+              return ts.hasStudent && ts.isConsistent;
+            });
+            if (!hasCons) return false;
+          } else if (filters.teacherStudentConsistency === 'inconsistent') {
+            const hasIncons = answers.some((a) => {
+              const ts = evaluateTeacherStudentConsistency(a);
+              return ts.hasStudent && !ts.isConsistent;
+            });
+            if (!hasIncons) return false;
+          }
         }
       }
 
@@ -534,7 +604,7 @@ export const DataTable: React.FC<DataTableProps> = ({
       </div>
 
       {/* 2. Top Banner Statistics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <span className="text-slate-400 text-[11px] font-medium block">测试题总量</span>
@@ -546,47 +616,81 @@ export const DataTable: React.FC<DataTableProps> = ({
           </div>
         </div>
 
+        {/* Card 2: 审核结论一致率 (Tier 与教师模型 risk_level) */}
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
-            <span className="text-slate-400 text-[11px] font-medium block">审核结论一致率</span>
+            <span className="text-slate-400 text-[11px] font-medium block">基准一致率 (Tier vs 教师)</span>
             <span className="text-lg font-bold font-mono text-emerald-600">
               {consistencyStats.rate}%
             </span>
           </div>
           <div className="text-right">
-            <span className="text-slate-400 text-[11px] font-medium block">一致判定数</span>
+            <span className="text-slate-400 text-[11px] font-medium block">基准一致数</span>
             <span className="text-xs font-mono font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
               {consistencyStats.consistent} / {consistencyStats.total}
             </span>
           </div>
         </div>
 
+        {/* Card 3: 师生模型评测一致率 (教师 vs 学生模型结果对比) - NEW */}
+        <div className="bg-white p-3.5 rounded-xl border border-purple-200 shadow-xs flex items-center justify-between bg-purple-50/20">
+          <div>
+            <span className="text-purple-700 text-[11px] font-bold block flex items-center gap-1">
+              <ArrowLeftRight className="w-3 h-3 text-purple-600" />
+              师生一致率 (教师 vs 学生)
+            </span>
+            <span className="text-lg font-bold font-mono text-purple-700">
+              {teacherStudentStats.withStudent > 0 ? `${teacherStudentStats.rate}%` : '待自测'}
+            </span>
+          </div>
+          <div className="text-right">
+            <span className="text-slate-400 text-[11px] font-medium block">师生对齐状态</span>
+            {teacherStudentStats.withStudent > 0 ? (
+              <span className="text-xs font-mono font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded">
+                一致 {teacherStudentStats.consistent} / 分歧 {teacherStudentStats.inconsistent}
+              </span>
+            ) : (
+              <button
+                onClick={() => {
+                  setTargetRole('student');
+                  fileInputRef.current?.click();
+                }}
+                className="text-[11px] text-purple-700 hover:underline font-semibold cursor-pointer"
+              >
+                上传学生数据 →
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Card 4: 师生分歧快速过滤 */}
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
-            <span className="text-slate-400 text-[11px] font-medium block">不一致样本数</span>
+            <span className="text-slate-400 text-[11px] font-medium block">师生分歧样本</span>
             <span className="text-lg font-bold font-mono text-rose-600">
-              {consistencyStats.inconsistent} 条
+              {teacherStudentStats.inconsistent} 条
             </span>
           </div>
           <button
-            onClick={() => setFilters((p) => ({ ...p, consistencyStatus: 'inconsistent' }))}
-            className="text-[11px] text-rose-600 hover:underline font-semibold"
+            onClick={() => setFilters((p) => ({ ...p, teacherStudentConsistency: 'inconsistent' }))}
+            className="text-[11px] text-rose-600 hover:underline font-semibold cursor-pointer"
+            title="筛选教师模型与学生模型评测结果不一致的条目"
           >
-            仅看异常 →
+            仅看师生分歧 →
           </button>
         </div>
 
         {/* Global actions: Reset / Clear */}
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between col-span-2 sm:col-span-2 md:col-span-4 lg:col-span-1">
           <div>
-            <span className="text-slate-400 text-[11px] font-medium block">数据管理快捷入口</span>
-            <span className="text-xs text-slate-600">支持全选批量删除</span>
+            <span className="text-slate-400 text-[11px] font-medium block">基准数据维护</span>
+            <span className="text-xs text-slate-600">重置与数据清空</span>
           </div>
           <div className="flex items-center gap-1.5">
             {onResetBenchmark && (
               <button
                 onClick={onResetBenchmark}
-                className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium flex items-center gap-1 transition-colors"
+                className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
                 title="重置恢复默认基准集"
               >
                 <RefreshCw className="w-3 h-3" />
@@ -596,7 +700,7 @@ export const DataTable: React.FC<DataTableProps> = ({
             {onClearAllData && (
               <button
                 onClick={handleClearAll}
-                className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-medium flex items-center gap-1 transition-colors"
+                className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
                 title="清空当前所有评测数据"
               >
                 <Trash2 className="w-3 h-3" />
@@ -653,7 +757,7 @@ export const DataTable: React.FC<DataTableProps> = ({
             <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-xs">
               <button
                 onClick={() => setActiveViewMode('records')}
-                className={`px-3 py-1.5 rounded-md font-semibold transition-all ${
+                className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer ${
                   activeViewMode === 'records'
                     ? 'bg-white text-slate-900 shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -663,7 +767,7 @@ export const DataTable: React.FC<DataTableProps> = ({
               </button>
               <button
                 onClick={() => setActiveViewMode('grouped')}
-                className={`px-3 py-1.5 rounded-md font-semibold transition-all ${
+                className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer ${
                   activeViewMode === 'grouped'
                     ? 'bg-white text-slate-900 shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -675,7 +779,7 @@ export const DataTable: React.FC<DataTableProps> = ({
           </div>
         </div>
 
-        {/* Row 2: Select Filters */}
+        {/* Row 2: Select Filters & Teacher-Student Consistency Button Controls */}
         <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-100 text-xs">
           {/* Domain */}
           <div className="flex items-center gap-1.5">
@@ -710,19 +814,96 @@ export const DataTable: React.FC<DataTableProps> = ({
             </select>
           </div>
 
-          {/* 审核结论（是否一致） */}
+          {/* 1. 审核结论（Tier 与教师模型是否一致） */}
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-slate-500 font-medium">审核结论 (是否一致):</span>
+            <span className="text-[11px] text-slate-500 font-medium" title="对比目标 tier 与教师模型文件标注的 risk_level">
+              审核结论 (Tier vs 教师):
+            </span>
             <select
               value={filters.consistencyStatus}
               onChange={(e) => setFilters((p) => ({ ...p, consistencyStatus: e.target.value }))}
               className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-md text-xs font-semibold text-slate-800"
             >
               <option value="all">全部结论</option>
-              <option value="consistent">✅ 一致 (Consistent)</option>
-              <option value="inconsistent">❌ 不一致 (Inconsistent)</option>
+              <option value="consistent">✅ 基准一致 (Tier = 教师)</option>
+              <option value="inconsistent">❌ 基准不一致 (Tier ≠ 教师)</option>
             </select>
           </div>
+
+          {/* 2. 【核心新增】对比上传的教师模型结果和学生模型结果是否一致 */}
+          <div className="flex items-center gap-1.5 p-1 bg-purple-50/70 border border-purple-200 rounded-lg">
+            <span className="text-[11px] text-purple-900 font-bold flex items-center gap-1">
+              <ArrowLeftRight className="w-3.5 h-3.5 text-purple-700" />
+              师生对比 (教师 vs 学生):
+            </span>
+            <div className="inline-flex rounded bg-white p-0.5 border border-purple-200 text-xs">
+              <button
+                type="button"
+                onClick={() => setFilters((p) => ({ ...p, teacherStudentConsistency: 'all' }))}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all cursor-pointer ${
+                  filters.teacherStudentConsistency === 'all'
+                    ? 'bg-purple-600 text-white font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                不限
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilters((p) => ({ ...p, teacherStudentConsistency: 'consistent' }))}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all cursor-pointer flex items-center gap-1 ${
+                  filters.teacherStudentConsistency === 'consistent'
+                    ? 'bg-emerald-600 text-white font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-emerald-700'
+                }`}
+                title="仅查看教师模型与学生模型结论一致的条目"
+              >
+                <span>✅ 师生一致</span>
+                {teacherStudentStats.withStudent > 0 && (
+                  <span className="text-[10px] opacity-90">({teacherStudentStats.consistent})</span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilters((p) => ({ ...p, teacherStudentConsistency: 'inconsistent' }))}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all cursor-pointer flex items-center gap-1 ${
+                  filters.teacherStudentConsistency === 'inconsistent'
+                    ? 'bg-rose-600 text-white font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-rose-700'
+                }`}
+                title="仅查看教师模型与学生模型结论分歧的条目"
+              >
+                <span>❌ 师生分歧</span>
+                {teacherStudentStats.withStudent > 0 && (
+                  <span className="text-[10px] opacity-90">({teacherStudentStats.inconsistent})</span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Clear Filter if active */}
+          {(filters.domain !== 'all' ||
+            filters.tier !== 'all' ||
+            filters.consistencyStatus !== 'all' ||
+            filters.teacherStudentConsistency !== 'all' ||
+            filters.minScore > 0 ||
+            filters.search.trim() !== '') && (
+            <button
+              onClick={() =>
+                setFilters({
+                  search: '',
+                  domain: 'all',
+                  tier: 'all',
+                  minScore: 0,
+                  consistencyStatus: 'all',
+                  teacherStudentConsistency: 'all',
+                })
+              }
+              className="text-[11px] text-slate-500 hover:text-slate-800 underline cursor-pointer"
+            >
+              清空筛选
+            </button>
+          )}
 
           {/* 最低分 */}
           <div className="flex items-center gap-1.5 ml-auto">
@@ -751,6 +932,10 @@ export const DataTable: React.FC<DataTableProps> = ({
                   initialConsistency:
                     filters.consistencyStatus !== 'all'
                       ? (filters.consistencyStatus as 'consistent' | 'inconsistent')
+                      : undefined,
+                  initialTeacherStudentConsistency:
+                    filters.teacherStudentConsistency !== 'all'
+                      ? (filters.teacherStudentConsistency as 'consistent' | 'inconsistent')
                       : undefined,
                 })
               }
@@ -789,21 +974,27 @@ export const DataTable: React.FC<DataTableProps> = ({
                   <th className="px-3 py-3">问题与回答摘录</th>
                   <th className="px-3 py-3">
                     <div className="flex items-center gap-1">
-                      <span>审核结论 (是否一致)</span>
-                      <span title="判定上传文件的 risk_level 与目标 tier 是否一致">
+                      <span>审核结论 (Tier vs 教师)</span>
+                      <span title="判定目标档位与教师模型标注的 risk_level 是否一致">
                         <Info className="w-3.5 h-3.5 text-slate-400" />
                       </span>
                     </div>
                   </th>
                   <th className="px-3 py-3">👨‍🏫 教师模型评审 (基准)</th>
                   <th className="px-3 py-3">🧑‍🎓 学生模型评审 (自测)</th>
+                  <th className="px-3 py-3">
+                    <div className="flex items-center gap-1 text-purple-900 font-bold">
+                      <ArrowLeftRight className="w-3.5 h-3.5 text-purple-600" />
+                      <span>师生对比 (教师 vs 学生)</span>
+                    </div>
+                  </th>
                   <th className="px-3 py-3 text-right">数据操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredFlatRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-12 text-center text-slate-400">
+                    <td colSpan={9} className="px-4 py-12 text-center text-slate-400">
                       无符合当前筛选条件的评测记录（可通过上方上传 JSON/JSONL 数据）
                     </td>
                   </tr>
@@ -815,6 +1006,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                       color: 'text-slate-700 bg-slate-50 border-slate-200',
                     };
                     const cons = evaluateConsistency(rec);
+                    const tsCons = evaluateTeacherStudentConsistency(rec);
                     const isCopied = copiedId === rec.id;
                     const isSelected = selectedRecordIds.has(rec.id);
                     const studentLabel = rec.student_label;
@@ -830,7 +1022,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                         <td className="px-3 py-3 align-top text-center">
                           <button
                             onClick={() => toggleSelectRecord(rec.id)}
-                            className="p-1 hover:text-blue-600 transition-colors"
+                            className="p-1 hover:text-blue-600 transition-colors cursor-pointer"
                           >
                             {isSelected ? (
                               <CheckSquare className="w-4 h-4 text-blue-600" />
@@ -878,7 +1070,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                           </p>
                         </td>
 
-                        {/* 审核结论（是否一致） */}
+                        {/* 审核结论（Tier vs 教师标注） */}
                         <td className="px-3 py-3 align-top whitespace-nowrap">
                           <div className="space-y-1">
                             <span
@@ -894,13 +1086,13 @@ export const DataTable: React.FC<DataTableProps> = ({
 
                             <div className="text-[10px] text-slate-500 font-mono space-y-0.5">
                               <div>
-                                文件 <span className="text-slate-400">risk_level:</span>{' '}
+                                教师 <span className="text-slate-400">risk:</span>{' '}
                                 <span className={`font-semibold ${cons.isConsistent ? 'text-slate-700' : 'text-rose-600 font-bold'}`}>
                                   {cons.fileRiskLevel}
                                 </span>
                               </div>
                               <div>
-                                系统 <span className="text-slate-400">tier:</span>{' '}
+                                目标 <span className="text-slate-400">tier:</span>{' '}
                                 <span className="font-semibold text-slate-700">{cons.tier}</span>
                               </div>
                             </div>
@@ -955,6 +1147,62 @@ export const DataTable: React.FC<DataTableProps> = ({
                           )}
                         </td>
 
+                        {/* 师生对比 (教师 vs 学生模型结果一致性) - NEW COLUMN */}
+                        <td className="px-3 py-3 align-top whitespace-nowrap">
+                          {!tsCons.hasStudent ? (
+                            <div className="space-y-1">
+                              <span className="text-[11px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded inline-flex items-center gap-1">
+                                <HelpCircle className="w-3 h-3 text-slate-400" />
+                                待自测
+                              </span>
+                              <button
+                                onClick={() => {
+                                  setTargetRole('student');
+                                  fileInputRef.current?.click();
+                                }}
+                                className="block text-[10px] text-purple-600 hover:text-purple-800 hover:underline cursor-pointer font-medium"
+                              >
+                                上传学生数据 +
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              <span
+                                className={`px-2 py-0.5 rounded-full border text-[11px] font-bold inline-flex items-center gap-1 ${tsCons.badgeClass}`}
+                              >
+                                {tsCons.isConsistent ? (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-purple-600" />
+                                ) : (
+                                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                                )}
+                                {tsCons.statusText}
+                              </span>
+                              <div className="text-[10px] text-slate-500 font-mono space-y-0.5">
+                                <div>
+                                  <span className="text-slate-400">判定:</span>{' '}
+                                  <span
+                                    className={`font-semibold ${
+                                      tsCons.isConsistent ? 'text-purple-800' : 'text-rose-600 font-bold'
+                                    }`}
+                                  >
+                                    {tsCons.teacherRisk} vs {tsCons.studentRisk}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400">分差:</span>{' '}
+                                  <span
+                                    className={`font-semibold ${
+                                      Math.abs(tsCons.scoreDiff) > 10 ? 'text-rose-600' : 'text-slate-700'
+                                    }`}
+                                  >
+                                    {tsCons.scoreDiff > 0 ? `+${tsCons.scoreDiff.toFixed(1)}` : tsCons.scoreDiff.toFixed(1)}分
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </td>
+
                         {/* 数据操作 */}
                         <td className="px-3 py-3 align-top text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1">
@@ -970,14 +1218,14 @@ export const DataTable: React.FC<DataTableProps> = ({
                             </button>
                             <button
                               onClick={() => onViewRecordDetail(rec)}
-                              className="p-1 rounded text-slate-500 hover:text-blue-600 hover:bg-slate-100 transition-colors"
+                              className="p-1 rounded text-slate-500 hover:text-blue-600 hover:bg-slate-100 transition-colors cursor-pointer"
                               title="查看评测明细详情"
                             >
                               <Eye className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => handleCopyJson(rec)}
-                              className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+                              className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
                               title="复制此条记录JSON"
                             >
                               {isCopied ? (
@@ -988,7 +1236,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                             </button>
                             <button
                               onClick={() => handleDeleteSingleRecord(rec)}
-                              className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                              className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
                               title="删除此条数据"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -1124,6 +1372,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                       const conf = TIER_CONFIG[tier];
                       if (!ans) return null;
                       const cons = evaluateConsistency(ans);
+                      const tsCons = evaluateTeacherStudentConsistency(ans);
 
                       return (
                         <div
@@ -1136,18 +1385,35 @@ export const DataTable: React.FC<DataTableProps> = ({
                               <span className={`w-1.5 h-1.5 rounded-full ${conf.dot}`} />
                               {conf.en}
                             </span>
-                            <span
-                              className={`px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold ${cons.badgeClass}`}
-                            >
-                              {cons.statusText}
-                            </span>
+                            <div className="flex items-center gap-1">
+                              <span
+                                className={`px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold ${cons.badgeClass}`}
+                                title={`基准一致性: 目标${cons.tier} vs 教师${cons.fileRiskLevel}`}
+                              >
+                                {cons.statusText}
+                              </span>
+                              {tsCons.hasStudent && (
+                                <span
+                                  className={`px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold ${tsCons.badgeClass}`}
+                                  title={`师生对比: 教师${tsCons.teacherRisk} vs 学生${tsCons.studentRisk}`}
+                                >
+                                  {tsCons.isConsistent ? '师生一致' : '师生分歧'}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <p className="text-[11px] text-slate-600 line-clamp-2 leading-relaxed">
                             {ans.answer}
                           </p>
                           <div className="mt-1.5 pt-1 border-t border-slate-200/50 flex items-center justify-between text-[10px] text-slate-400 font-mono">
-                            <span>文件: {cons.fileRiskLevel}</span>
-                            <span>{ans.label.score.toFixed(0)}分</span>
+                            <span>教师: {cons.fileRiskLevel} ({ans.label.score.toFixed(0)}分)</span>
+                            {tsCons.hasStudent ? (
+                              <span className="text-purple-700 font-semibold">
+                                学生: {tsCons.studentRisk} ({ans.student_label?.score.toFixed(0)}分)
+                              </span>
+                            ) : (
+                              <span>未测学生</span>
+                            )}
                           </div>
                         </div>
                       );
