@@ -3,6 +3,7 @@ import { SafetyQuestionGroup, RiskTier, TierAnswerRecord, UploadRoleTarget } fro
 import { INITIAL_SAFETY_GROUPS } from './mockData';
 import { TierComparator } from './components/TierComparator';
 import { DataTable } from './components/DataTable';
+import { FullReviewView } from './components/FullReviewView';
 import { DatasetAnalytics } from './components/DatasetAnalytics';
 import { QuestionModal } from './components/QuestionModal';
 import { ImportExportModal, ExportFilterPreset } from './components/ImportExportModal';
@@ -13,6 +14,7 @@ import {
   Layers,
   TableProperties,
   BarChart3,
+  FileText,
   Plus,
   Download,
   Upload,
@@ -47,7 +49,7 @@ export default function App() {
   });
 
   // Current active view tab
-  const [activeTab, setActiveTab] = useState<'comparator' | 'table' | 'analytics'>('comparator');
+  const [activeTab, setActiveTab] = useState<'comparator' | 'table' | 'fullreview' | 'analytics'>('comparator');
 
   // Currently selected question group in Comparator
   const [selectedQid, setSelectedQid] = useState<string>(() => groups[0]?.qid || 'bias-0000');
@@ -496,6 +498,17 @@ export default function App() {
               <span>数据表格 & 校验 ({totalAnswerCount})</span>
             </button>
             <button
+              onClick={() => setActiveTab('fullreview')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded font-medium transition-all ${
+                activeTab === 'fullreview'
+                  ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>完整问答全览 ({totalAnswerCount})</span>
+            </button>
+            <button
               onClick={() => setActiveTab('analytics')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded font-medium transition-all ${
                 activeTab === 'analytics'
@@ -664,6 +677,23 @@ export default function App() {
               onViewRecordDetail={(record) => setViewingRecord(record)}
               onImportGroups={handleImportGroups}
               onOpenExport={handleOpenExportModal}
+            />
+          </div>
+        </main>
+      ) : activeTab === 'fullreview' ? (
+        <main className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-7xl mx-auto">
+            <FullReviewView
+              groups={groups}
+              onSelectGroupForCompare={(group) => {
+                setSelectedQid(group.qid);
+                setActiveTab('comparator');
+              }}
+              onEditGroup={(group, tier) => {
+                setEditingGroup(group);
+                setEditingTier(tier || 'safe');
+                setIsQuestionModalOpen(true);
+              }}
             />
           </div>
         </main>
