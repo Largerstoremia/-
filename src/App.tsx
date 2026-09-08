@@ -694,6 +694,7 @@ export default function App() {
                 setEditingTier(tier || 'safe');
                 setIsQuestionModalOpen(true);
               }}
+              onOpenExport={handleOpenExportModal}
             />
           </div>
         </main>
